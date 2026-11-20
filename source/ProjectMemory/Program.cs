@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.AspNetCore;
 using ProjectMemory.Configuration;
+using ProjectMemory.Database;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -42,7 +43,7 @@ builder.Services.AddOptions<ProjectMemoryOptions>()
     .ValidateOnStart();
 
 // Register the lifecycle database. Schema migrations are applied to an isolated copy during startup before MCP requests are accepted.
-//builder.Services.AddPersistence(); // ToDo: Database
+builder.Services.AddPersistence();
 
 // Add the MCP services: the transport to use (http) and the tools to register.
 builder.Services
@@ -63,10 +64,10 @@ builder.Services
 var app = builder.Build();
 
 // Ensure the lifecycle database is fully initialized or migrated before the MCP endpoint starts.
-//await app.Services.MigrateDatabaseAsync(); // ToDo: Database
+await app.Services.MigrateDatabaseAsync();
 
 // Map the health check endpoints for liveness and readiness probes.
-//app.MapProjectMemoryProxyHealthEndpoints(); // ToDo: health check
+//app.MapProjectMemoryHealthEndpoints(); // ToDo: health check
 
 app.MapMcp("/mcp");
 app.Run();
