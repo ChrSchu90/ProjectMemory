@@ -23,7 +23,7 @@ on:
 env:
   NET_SOLUTION: ProjectMemory.slnx
   NET_DEPLOY_PROJECT: source/ProjectMemory/ProjectMemory.csproj
-  NET_DB_PROJECT: source/ProjectMemory.Persistence/ProjectMemory.Persistence.csproj
+  NET_DB_PROJECT: source/ProjectMemory/ProjectMemory.csproj
   NET_PUBLISH_DIR: ProjectMemory/bin/publish/
   NET_PUBLISH_ARGS: "--verbosity n -c Release -p:DebugType=embedded -p:PublishSingleFile=true -p:GenerateDocumentationFile=false --self-contained true"
   APP_LINUX_X64_ARCHIVE: "ProjectMemory-linux-x64.tar.gz"
