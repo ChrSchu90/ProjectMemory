@@ -1,0 +1,24 @@
+<Solution>
+  <Folder Name="/Docker Items/">
+    <File Path=".dockerignore" />
+    <File Path="docker-debug.sh" />
+    <File Path="Dockerfile" />
+    <File Path="examples/compose.yml" />
+  </Folder>
+  <Folder Name="/Github Items/">
+    <File Path=".github/dependabot.yml" />
+    <File Path=".github/workflows/build.yml" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="dotnet-tools.json" />
+    <File Path="global.json" />
+    <File Path="NuGet.Config" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="source/ProjectMemory/ProjectMemory.csproj" />
+  <Project Path="tests/ProjectMemory.Tests/ProjectMemory.Tests.csproj" Id="562621ab-8d4a-4d20-945f-8e9341caa3be" />
+</Solution>
