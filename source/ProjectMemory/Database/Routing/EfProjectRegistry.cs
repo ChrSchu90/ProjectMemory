@@ -310,7 +310,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var affectedRows = await dbContext.ContextBindings
-                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName)
+                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName && !binding.RoutingProject.DeletionPending)
                                .ExecuteDeleteAsync(cancellationToken)
                                .ConfigureAwait(false);
 

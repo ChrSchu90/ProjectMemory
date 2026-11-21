@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -43,19 +42,93 @@ public sealed class MemoryToolsTests : ServerHostTestBase
 
     #region Test Preparation
 
-    /// <summary>
-    /// Checks the Linux descriptor ABI required by these filesystem workflows.
-    /// </summary>
-    [TestInitialize]
-    public void CheckPlatform()
-    {
-        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64 or Architecture.Arm))
-            Assert.Inconclusive("This workflow requires a supported Linux descriptor ABI.");
-    }
-
     #endregion
 
     #region Tests
+
+    /// <summary>
+    /// Verifies that two authorized reads of the same file overlap and binding waits for both.
+    /// </summary>
+    /// <returns>The parallel MCP and registry verification.</returns>
+    [TestMethod]
+    public async Task SameFileReadersOverlap()
+    {
+        using var release = new ManualResetEventSlim();
+        var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readers = 0;
+        await using var host = await StartWithCheckpointAsync(point =>
+        {
+            if (point != LifecycleCheckpoint.Reading)
+                return;
+            if (Interlocked.Increment(ref readers) == 2)
+            {
+                both.SetResult();
+            }
+
+            Assert.IsTrue(release.Wait(TimeSpan.FromSeconds(15)));
+        });
+        using var client = host.CreateClient();
+        var id = await ProjectAsync(client, Context);
+        var hash = await CreateAsync(client, Context, "parallel");
+        Task<JsonElement> ReadAsync() => CallToolAsync(client, "read_memory", new { context_id = Context, path = Note });
+        var reads = Task.WhenAll(ReadAsync(), ReadAsync());
+        try
+        {
+            await both.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var list = await CallToolAsync(client, "list_memories", new { context_id = Context }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.AreEqual(Note, list.GetProperty("data").GetProperty("paths")[0].GetString());
+            var search = await CallToolAsync(client, "search_memories", new { context_id = Context, query = "parallel" }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.AreEqual(Note, search.GetProperty("data").GetProperty("matches")[0].GetProperty("path").GetString());
+            var bind = host.Services.GetRequiredService<ProjectManager>().BindAsync("local:alias", id);
+            Assert.IsFalse(bind.IsCompleted);
+            release.Set();
+            Assert.IsTrue((await bind).Ok);
+            foreach (var read in await reads)
+            {
+                Assert.AreEqual(hash, HashFrom(read));
+            }
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    /// <summary>
+    /// Verifies that a waiting writer precedes later readers, cancellation removes a waiter,
+    /// and an unrelated project proceeds while the first project is occupied.
+    /// </summary>
+    /// <returns>The asynchronous queue verification.</returns>
+    [TestMethod]
+    public async Task ProjectQueueAdmitsInOrder()
+    {
+        var locks = new ProjectLocks();
+        var id = Guid.NewGuid();
+        var reader = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = locks.RunAsync(id, ProjectAccess.Read, () => reader.Task, default);
+        using var cancelled = new CancellationTokenSource();
+        var abandoned = locks.RunAsync(id, ProjectAccess.Write, () => Task.FromResult(0), cancelled.Token);
+        var exclusive = locks.RunAsync(id, ProjectAccess.Write, () =>
+        {
+            writing.SetResult();
+            return writer.Task;
+        }, default);
+        var last = locks.RunAsync(id, ProjectAccess.Read, () => Task.FromResult(3), default);
+        cancelled.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => abandoned);
+        Assert.IsFalse(writing.Task.IsCompleted);
+        Assert.IsFalse(last.IsCompleted);
+        Assert.AreEqual(4, await locks.RunAsync(Guid.NewGuid(), ProjectAccess.Write, () => Task.FromResult(4), default));
+        reader.SetResult(1);
+        await writing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.IsFalse(last.IsCompleted);
+        writer.SetException(new IOException("injected"));
+        await Assert.ThrowsExactlyAsync<IOException>(() => exclusive);
+        Assert.AreEqual(1, await first);
+        Assert.AreEqual(3, await last.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
 
     /// <summary>
     /// Verifies that navigation observes live nested files, stable pages and literal hits across both transports and auth modes.
@@ -83,16 +156,9 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         Assert.IsFalse(Directory.Exists(root));
         await CallToolAsync(client, "list_memories", list, protocol, "MEMORY_NOT_FOUND");
 
-        Directory.CreateDirectory(Path.Combine(root, "Notes", "deep"));
-        File.WriteAllText(Path.Combine(root, "Outside.md"), search.query);
-        var nested = Path.Combine(root, "Notes", "deep", "new.md");
-        var first = Path.Combine(root, "Notes", "A.md");
-        File.WriteAllText(nested, "Second file: " + search.query);
-        File.WriteAllText(first, "heading\r\nUse c++ [X].* here.\r\n" + search.query);
-        foreach (var name in new[] { ".private.md", "not-markdown.txt", "upper.MD", "invalid?.md" })
-        {
-            File.WriteAllText(Path.Combine(root, "Notes", name), search.query);
-        }
+        await CallToolAsync(client, "create_memory", new { list.context_id, path = "Outside.md", content = search.query }, protocol);
+        var nested = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/deep/new.md", content = "Second file: " + search.query }, protocol);
+        var first = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/A.md", content = "heading\r\nUse c++ [X].* here.\r\n" + search.query }, protocol);
 
         var page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
         Assert.AreEqual("Notes/A.md", page.GetProperty("paths")[0].GetString());
@@ -112,12 +178,13 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         Assert.AreEqual("Notes/deep/new.md", last.GetProperty("matches")[0].GetProperty("path").GetString());
         Assert.IsFalse(last.GetProperty("has_more").GetBoolean());
 
-        File.Move(nested, Path.Combine(root, "Notes", "moved.md"));
-        File.WriteAllText(first, "replacement");
+        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/deep/new.md", expected_content_hash = HashFrom(nested) }, protocol);
+        var moved = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/moved.md", content = search.query }, protocol);
+        await CallToolAsync(client, "update_memory", new { list.context_id, path = "Notes/A.md", content = "replacement", expected_content_hash = HashFrom(first) }, protocol);
         found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
         Assert.AreEqual("Notes/moved.md", found.GetProperty("matches")[0].GetProperty("path").GetString());
         Assert.IsFalse(found.GetProperty("has_more").GetBoolean());
-        File.Delete(Path.Combine(root, "Notes", "moved.md"));
+        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/moved.md", expected_content_hash = HashFrom(moved) }, protocol);
         found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
         Assert.AreEqual(0, found.GetProperty("matches").GetArrayLength());
         page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
@@ -265,7 +332,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         await CallToolAsync(client, "read_memory", new { context_id = "CHAT:Alpha", path = Note }, protocol, "INVALID_CONTEXT");
 
         var raw = Encoding.UTF8.GetBytes("\ufeffone\r\ntwö\nfinal");
-        await File.WriteAllBytesAsync(file, raw);
+        await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = Encoding.UTF8.GetString(raw), expected_content_hash = HashFrom(created) }, protocol);
         var targeted = await CallToolAsync(client, "read_memory", new { context_id = "local:alias", path = Note, start_line = 2, line_count = 1 }, protocol);
         Assert.AreEqual("twö\n", targeted.GetProperty("data").GetProperty("content").GetString());
         Assert.AreEqual(Hash(raw), HashFrom(targeted));
@@ -276,13 +343,8 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         CollectionAssert.AreEqual(raw, await File.ReadAllBytesAsync(file));
         var updated = await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = "replacement", expected_content_hash = Hash(raw) }, protocol);
         Assert.AreEqual("replacement", await File.ReadAllTextAsync(file));
-        File.Move(file, file + ".md");
-        await CallToolAsync(client, "read_memory", args, protocol, "MEMORY_NOT_FOUND");
-        await CallToolAsync(client, "delete_memory", new { args.context_id, path = Note + ".md", expected_content_hash = HashFrom(updated) }, protocol);
-        Assert.IsFalse(File.Exists(file + ".md"));
-        File.WriteAllText(file, "manual");
-        await CallToolAsync(client, "read_memory", args, protocol);
-        File.Delete(file);
+        await CallToolAsync(client, "delete_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(updated) }, protocol);
+        Assert.IsFalse(File.Exists(file));
         await CallToolAsync(client, "read_memory", args, protocol, "MEMORY_NOT_FOUND");
 
         await CallToolAsync(client, "create_memory", new { context_id = "chat:alpha", path = Note, content = "sibling" }, protocol);
@@ -333,16 +395,19 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     }
 
     /// <summary>
-    /// Verifies that a staging failure preserves the old file and cleans every private temporary entry.
+    /// Verifies that a storage error reports failure with the version visible at the injected publication boundary.
     /// </summary>
+    /// <param name="published">Whether the fault follows the publication move.</param>
     /// <returns>The asynchronous verification.</returns>
     [TestMethod]
-    public async Task StagingFailurePreservesBytes()
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task PublicationFailureReturnsStorageError(bool published)
     {
         var fail = false;
         await using var fixture = await StartWithCheckpointAsync(point =>
         {
-            if (fail && point == LifecycleCheckpoint.Staged)
+            if (fail && point == (published ? LifecycleCheckpoint.Published : LifecycleCheckpoint.Staged))
                 throw new IOException("private-host-diagnostic");
         });
         using var client = fixture.CreateClient();
@@ -351,7 +416,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         fail = true;
         var result = await CallToolAsync(client, "update_memory", new { context_id = Context, path = Note, content = "new", expected_content_hash = old }, error: "STORAGE_UNAVAILABLE");
         var file = Path.Combine(fixture.Root, "projects", id, Note);
-        Assert.AreEqual("original", await File.ReadAllTextAsync(file));
+        Assert.AreEqual(published ? "new" : "original", await File.ReadAllTextAsync(file));
         Assert.HasCount(1, Directory.GetFileSystemEntries(Path.GetDirectoryName(file)!));
         Assert.IsFalse(result.GetRawText().Contains("private-host-diagnostic", StringComparison.Ordinal));
     }
@@ -388,12 +453,12 @@ public sealed class MemoryToolsTests : ServerHostTestBase
                 deleting = await ProjectAsync(client, "local:delete");
                 await CallToolAsync(client, "bind_context", new { context_id = "git:Host/Owner/Repo", project_id = keep });
                 await CreateAsync(client, Context, "seed");
-                await File.WriteAllBytesAsync(Path.Combine(original, "projects", keep, Note), raw);
                 await CreateAsync(client, "chat:alpha", "archived");
                 await CallToolAsync(client, "archive_project", new { project_id = archived });
                 await CreateAsync(client, "local:delete", "doomed");
                 await CallToolAsync(client, "create_memory", new { context_id = "local:delete", path = "second.md", content = "doomed too" });
                 await CallToolAsync(client, "delete_project", new { project_id = deleting }, error: "RECOVERY_REQUIRED");
+                await CallToolAsync(client, "unbind_context", new { context_id = "local:delete" }, error: "PROJECT_BLOCKED");
                 await CallToolAsync(client, "reactivate_project", new { project_id = deleting }, error: "PROJECT_BLOCKED");
                 await CallToolAsync(client, "bind_context", new { project_id = deleting, context_id = "local:new" }, error: "PROJECT_BLOCKED");
                 await CallToolAsync(client, "read_memory", new { context_id = "local:delete", path = Note }, error: "PROJECT_ARCHIVED");
@@ -406,6 +471,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
             Assert.AreEqual(stop is LifecycleCheckpoint.Quarantined or LifecycleCheckpoint.PurgeEntry, Directory.Exists(Path.Combine(original, "quarantine", deleting)));
             Directory.CreateDirectory(Path.Combine(original, "operator", "empty"));
             File.WriteAllBytes(Path.Combine(original, "operator", ".marker"), [0, 255]);
+            await File.WriteAllBytesAsync(Path.Combine(original, "projects", keep, Note), raw);
             CopyColdDataset(original, backup);
             CopyColdDataset(backup, restored);
             await using var restarted = await Fixture.StartAsync(root: restored, ownsRoot: false);
@@ -497,6 +563,122 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     }
 
     /// <summary>
+    /// Verifies that an unsafe stopped dataset prevents replay of an independent intent before any tree is moved.
+    /// </summary>
+    /// <param name="kind">The unsafe entry introduced while stopped.</param>
+    /// <returns>The startup and persisted-state verification.</returns>
+    [TestMethod]
+    [DataRow("hidden-dangling")]
+    [DataRow("orphan-project")]
+    [DataRow("unexpected-quarantine")]
+    [DataRow("duplicate-tree")]
+    [DataRow("invalid-root-name")]
+    [DataRow("depth-budget")]
+    [DataRow("database-link")]
+    public async Task PreflightPrecedesAllRecovery(string kind)
+    {
+        var root = Fixture.CreateRoot();
+        try
+        {
+            string id, other;
+            await using (var host = await StartWithCheckpointAsync(point =>
+            {
+                if (point == LifecycleCheckpoint.IntentCommitted)
+                    throw new IOException("stop before move");
+            }, root, false))
+            {
+                using var client = host.CreateClient();
+                id = await ProjectAsync(client, Context);
+                other = await ProjectAsync(client, "local:keep");
+                await CreateAsync(client, Context, "doomed");
+                await CallToolAsync(client, "delete_project", new { project_id = id }, error: "RECOVERY_REQUIRED");
+            }
+
+            var keep = Path.Combine(root, "projects", other);
+            switch (kind)
+            {
+                case "hidden-dangling":
+                    var hidden = Directory.CreateDirectory(Path.Combine(keep, ".offline"));
+                    File.CreateSymbolicLink(Path.Combine(hidden.FullName, ".pm-dangling"), Path.Combine(root, "missing"));
+                    break;
+                case "orphan-project":
+                    Directory.CreateDirectory(Path.Combine(root, "projects", Guid.NewGuid().ToString("D")));
+                    break;
+                case "unexpected-quarantine":
+                    Directory.CreateDirectory(Path.Combine(root, "quarantine", other));
+                    break;
+                case "duplicate-tree":
+                    Directory.CreateDirectory(Path.Combine(root, "quarantine", id));
+                    break;
+                case "invalid-root-name":
+                    Directory.CreateDirectory(Path.Combine(root, "projects", "unknown"));
+                    break;
+                case "depth-budget":
+                    Directory.CreateDirectory(Path.Combine(keep, string.Join('/', Enumerable.Repeat("d", 129))));
+                    break;
+                case "database-link":
+                    File.CreateSymbolicLink(Path.Combine(root, "ProjectMemory.db.migrate"), Path.Combine(root, "missing"));
+                    break;
+            }
+
+            var failure = await Assert.ThrowsExactlyAsync<MemoryFileException>(() => Fixture.StartAsync(root: root, ownsRoot: false));
+            Assert.AreEqual("UNSAFE_PATH", failure.Code);
+            Assert.AreEqual("doomed", File.ReadAllText(Path.Combine(root, "projects", id, Note)));
+            Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1"));
+            Assert.AreEqual(2L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that restart preserves ordinary offline additions, hidden remnants and lazy project roots.
+    /// </summary>
+    /// <returns>The stopped-volume navigation verification.</returns>
+    [TestMethod]
+    public async Task PreflightPreservesOfflineFiles()
+    {
+        var root = Fixture.CreateRoot();
+        try
+        {
+            string project, lazy, oldHash;
+            await using (var first = await Fixture.StartAsync(root: root, ownsRoot: false))
+            {
+                using var client = first.CreateClient();
+                project = await ProjectAsync(client, Context);
+                lazy = await ProjectAsync(client, "local:empty");
+                oldHash = await CreateAsync(client, Context, "before");
+            }
+
+            var tree = Directory.CreateDirectory(Path.Combine(root, "projects", project)).FullName;
+            File.Move(Path.Combine(tree, Note), Path.Combine(tree, "new.md"));
+            foreach (var name in new[] { ".pm-leftover", "manual.txt", "upper.MD", "invalid?.md", "new.md" })
+            {
+                File.WriteAllText(Path.Combine(tree, name), "offline");
+            }
+
+            await using var restarted = await Fixture.StartAsync(root: root, ownsRoot: false);
+            using var recovered = restarted.CreateClient();
+            var list = await CallToolAsync(recovered, "list_memories", new { context_id = Context });
+            Assert.AreEqual("new.md", list.GetProperty("data").GetProperty("paths").EnumerateArray().Single().GetString());
+            await CallToolAsync(recovered, "read_memory", new { context_id = Context, path = Note }, error: "MEMORY_NOT_FOUND");
+            var read = await CallToolAsync(recovered, "read_memory", new { context_id = Context, path = "new.md" });
+            Assert.AreEqual("offline", read.GetProperty("data").GetProperty("content").GetString());
+            await CallToolAsync(recovered, "update_memory", new { context_id = Context, path = "new.md", content = "stale", expected_content_hash = oldHash }, error: "CONFLICT");
+            var hits = await CallToolAsync(recovered, "search_memories", new { context_id = Context, query = "offline" });
+            Assert.AreEqual("new.md", hits.GetProperty("data").GetProperty("matches").EnumerateArray().Single().GetProperty("path").GetString());
+            Assert.HasCount(5, Directory.GetFiles(tree));
+            Assert.IsFalse(Directory.Exists(Path.Combine(root, "projects", lazy)));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    /// <summary>
     /// Verifies that failures in the private quarantine keep the project blocked across restart and permit a safe retry.
     /// </summary>
     /// <returns>The asynchronous recovery verification.</returns>
@@ -520,13 +702,11 @@ public sealed class MemoryToolsTests : ServerHostTestBase
                 await CallToolAsync(client, "delete_project", new { project_id = id }, error: "RECOVERY_REQUIRED");
             }
 
-            await using (var restarted = await Fixture.StartAsync(root: root, ownsRoot: false))
-            {
-                using var client = restarted.CreateClient();
-                await CallToolAsync(client, "reactivate_project", new { project_id = id }, error: "PROJECT_BLOCKED");
-                await CallToolAsync(client, "create_memory", new { context_id = Context, path = Note, content = "denied" }, error: "PROJECT_ARCHIVED");
-                Assert.AreEqual("preserve", File.ReadAllText(outside));
-            }
+            var failure = await Assert.ThrowsExactlyAsync<MemoryFileException>(() => Fixture.StartAsync(root: root, ownsRoot: false));
+            Assert.AreEqual("UNSAFE_PATH", failure.Code);
+            Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1 AND Status='Archived'"));
+            Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
+            Assert.AreEqual("preserve", File.ReadAllText(outside));
 
             // The operator inspects and removes only the offending link while stopped.
             File.Delete(Path.Combine(root, "quarantine", id, "unsafe.md"));

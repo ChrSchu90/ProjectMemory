@@ -127,13 +127,16 @@ internal static class ServerHost
         {
             // Validate configuration and storage before initializing the database.
             _ = app.Services.GetRequiredService<IOptions<ProjectMemoryOptions>>().Value;
+            var stopping = app.Lifetime.ApplicationStopping;
+            var inventory = app.Services.GetRequiredService<MemoryFileStore>()
+                .Preflight(app.Services.GetRequiredService<DatabasePaths>(), stopping);
             var storage = app.Services.GetRequiredService<DataRootHealthCheck>();
             if ((await storage.CheckHealthAsync(new HealthCheckContext())).Status != HealthStatus.Healthy)
                 throw new InvalidOperationException("Data storage is unavailable.");
 
             // Complete database initialization before the MCP endpoint can accept requests.
-            await app.Services.MigrateDatabaseAsync();
-            await app.Services.GetRequiredService<ProjectDeletion>().RecoverAsync(app.Lifetime.ApplicationStopping);
+            await app.Services.MigrateDatabaseAsync(stopping);
+            await app.Services.GetRequiredService<ProjectDeletion>().RecoverAsync(inventory, stopping);
 
             // Protect MCP requests and map the private operational and transport endpoints.
             app.UseMiddleware<OptionalBearerMiddleware>();

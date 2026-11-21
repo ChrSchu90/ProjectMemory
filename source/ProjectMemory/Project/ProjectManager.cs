@@ -106,7 +106,7 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     {
         if (!ValidProjectId(projectId, out var id))
             return AdministrationResponse<ProjectStatusResult>.Failure("INVALID_ARGUMENT");
-        var change = await locks.RunAsync(id, () => registry.SetProjectStatusAsync(id, status, cancellationToken), cancellationToken).ConfigureAwait(false);
+        var change = await locks.RunAsync(id, ProjectAccess.Write, () => registry.SetProjectStatusAsync(id, status, cancellationToken), cancellationToken).ConfigureAwait(false);
         return change.Error is { } error ? Failure<ProjectStatusResult>(error) : AdministrationResponse<ProjectStatusResult>.Success(new ProjectStatusResult(Describe(change.Value!), change.Changed));
     }
 
@@ -123,7 +123,7 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
             return AdministrationResponse<ContextBindingResult>.Failure("INVALID_CONTEXT");
         if (!ValidProjectId(projectId, out var id))
             return AdministrationResponse<ContextBindingResult>.Failure("INVALID_ARGUMENT");
-        var change = await registry.BindAsync(contextId, id, cancellationToken).ConfigureAwait(false);
+        var change = await locks.RunAsync(id, ProjectAccess.Write, () => registry.BindAsync(contextId, id, cancellationToken), cancellationToken).ConfigureAwait(false);
         return change.Error is { } error ? Failure<ContextBindingResult>(error) : AdministrationResponse<ContextBindingResult>.Success(new ContextBindingResult(contextId.ToString(), id, change.Changed));
     }
 
@@ -132,7 +132,7 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     /// </summary>
     /// <param name="context">The exact case-sensitive context ID whose binding should be removed.</param>
     /// <param name="cancellationToken">The token used to cancel the binding removal.</param>
-    /// <returns>A task confirming removal of the binding, or an invalid-context or unbound-context error.</returns>
+    /// <returns>A task confirming removal or reporting invalid, unbound or deletion-blocked state.</returns>
     public async Task<AdministrationResponse<ContextUnbindingResult>> UnbindAsync(string? context, CancellationToken cancellationToken = default)
     {
         if (!ContextId.TryParse(context, out var contextId))
@@ -140,12 +140,18 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
         var binding = await registry.FindBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
         if (binding is null)
             return AdministrationResponse<ContextUnbindingResult>.Failure("CONTEXT_UNBOUND");
-        var removed = await locks.RunAsync(binding.MemoryProjectId, async () =>
+        return await locks.RunAsync(binding.MemoryProjectId, ProjectAccess.Write, async () =>
         {
             var current = await registry.FindBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
-            return current?.MemoryProjectId == binding.MemoryProjectId && await registry.TryRemoveBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
+            if (current?.MemoryProjectId != binding.MemoryProjectId)
+                return AdministrationResponse<ContextUnbindingResult>.Failure("CONTEXT_UNBOUND");
+
+            // With the owner rechecked under its exclusive lease, the remaining
+            // delete predicate is the durable deletion block.
+            if (!await registry.TryRemoveBindingAsync(contextId, cancellationToken).ConfigureAwait(false))
+                return AdministrationResponse<ContextUnbindingResult>.Failure("PROJECT_BLOCKED");
+            return AdministrationResponse<ContextUnbindingResult>.Success(new ContextUnbindingResult(contextId.ToString(), true));
         }, cancellationToken).ConfigureAwait(false);
-        return removed ? AdministrationResponse<ContextUnbindingResult>.Success(new ContextUnbindingResult(contextId.ToString(), true)) : AdministrationResponse<ContextUnbindingResult>.Failure("CONTEXT_UNBOUND");
     }
 
     /// <summary>

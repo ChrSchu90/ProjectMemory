@@ -1,6 +1,7 @@
 namespace ProjectMemory.Project;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -18,7 +19,7 @@ using ProjectMemory.Tools;
 /// </summary>
 /// <param name="factory">The existing SQLite context factory.</param>
 /// <param name="locks">The service's project locks.</param>
-/// <param name="files">Descriptor-relative project storage.</param>
+/// <param name="files">UUID-scoped project storage.</param>
 /// <param name="logger">Logs safe recovery diagnostics.</param>
 /// <param name="checkpoint">Optional observer for interruption tests.</param>
 internal sealed class ProjectDeletion(IDbContextFactory<ProjectMemoryDbContext> factory, ProjectLocks locks,
@@ -52,22 +53,35 @@ internal sealed class ProjectDeletion(IDbContextFactory<ProjectMemoryDbContext> 
     {
         if (!ProjectManager.ValidProjectId(projectId, out var id))
             return Task.FromResult(AdministrationResponse<ProjectDeletedResult>.Failure("INVALID_ARGUMENT"));
-        return locks.RunAsync(id, () => DeleteLockedAsync(id, token), token);
+        return locks.RunAsync(id, ProjectAccess.Write, () => DeleteLockedAsync(id, token), token);
     }
 
     /// <summary>
     /// Resumes only persisted intents before the host accepts requests.
     /// </summary>
+    /// <param name="inventory">The complete bounded tree inventory from startup preflight.</param>
     /// <param name="token">Cancellation during startup recovery.</param>
     /// <returns>The task completing after every pending intent has been attempted.</returns>
-    internal async Task RecoverAsync(CancellationToken token)
+    internal async Task RecoverAsync((HashSet<Guid> Projects, HashSet<Guid> Quarantine) inventory, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token).ConfigureAwait(false);
         var ids = await db.RoutingProjects.Where(row => row.DeletionPending)
             .Select(row => row.MemoryProjectId).ToListAsync(token).ConfigureAwait(false);
+        if (!inventory.Quarantine.IsSubsetOf(ids))
+            throw new MemoryFileException("UNSAFE_PATH");
+
+        // Verify every discovered owner before replaying even the first intent.
+        // Projects without a tree are valid until the first memory is created.
+        foreach (var batch in inventory.Projects.Chunk(256))
+        {
+            var known = await db.RoutingProjects.CountAsync(row => batch.Contains(row.MemoryProjectId), token).ConfigureAwait(false);
+            if (known != batch.Length)
+                throw new MemoryFileException("UNSAFE_PATH");
+        }
+
         foreach (var id in ids)
         {
-            await locks.RunAsync(id, () => DeleteLockedAsync(id, token), token).ConfigureAwait(false);
+            await locks.RunAsync(id, ProjectAccess.Write, () => DeleteLockedAsync(id, token), token).ConfigureAwait(false);
         }
     }
 

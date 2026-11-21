@@ -37,17 +37,18 @@ internal sealed class MemoryManager(ProjectManager projects, ProjectLocks locks,
     /// Resolves a context then rechecks its active identity inside the filesystem critical section.
     /// </summary>
     /// <param name="context">The exact supplied context ID.</param>
+    /// <param name="access">The sharing mode required by the operation.</param>
     /// <param name="operation">The bounded operation on the revalidated project.</param>
     /// <param name="token">Cancellation before file access.</param>
     /// <returns>The operation result or a closed validation or routing error.</returns>
-    internal async Task<AdministrationResponse<T>> RunAsync<T>(string context, Func<Guid, T> operation, CancellationToken token) where T : class
+    internal async Task<AdministrationResponse<T>> RunAsync<T>(string context, ProjectAccess access, Func<Guid, T> operation, CancellationToken token) where T : class
     {
         var initial = await projects.ResolveAsync(context, token).ConfigureAwait(false);
         if (!initial.Ok)
             return AdministrationResponse<T>.Failure(initial.Error!.Code);
         var id = initial.Data!.ProjectId;
         checkpoint?.Invoke(LifecycleCheckpoint.Routed);
-        return await locks.RunAsync(id, async () =>
+        return await locks.RunAsync(id, access, async () =>
         {
             var current = await projects.ResolveAsync(context, token).ConfigureAwait(false);
             if (!current.Ok)

@@ -3,16 +3,17 @@ namespace ProjectMemory.Tests.MemoryFiles;
 using System;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Configuration;
 using ProjectMemory.MemoryFiles;
 
 /// <summary>
-/// Exercises Linux descriptor, durability and validation boundaries on private fixtures.
+/// Exercises managed file publication, recovery and validation boundaries on private fixtures.
 /// </summary>
 [TestClass]
 public sealed class MemoryFileStoreTests
@@ -46,8 +47,6 @@ public sealed class MemoryFileStoreTests
     [TestInitialize]
     public void Initialize()
     {
-        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64 or Architecture.Arm))
-            Assert.Inconclusive("The descriptor store requires Linux x64, arm64 or arm.");
         _root = Directory.CreateTempSubdirectory("pm-store-").FullName;
         _outside = Directory.CreateTempSubdirectory("pm-sentinel-").FullName;
         _parent = Path.Combine(_root, "projects", _project.ToString("D"), "nested");
@@ -78,13 +77,12 @@ public sealed class MemoryFileStoreTests
     #region Tests
 
     /// <summary>
-    /// Verifies that symlinks, multiply linked files and FIFOs cannot be read, updated or removed as memories.
+    /// Verifies that symlinks, dangling links and directories cannot be read, updated or removed as memories.
     /// </summary>
     /// <param name="kind">The unsafe entry type.</param>
     [TestMethod]
     [DataRow("symlink")]
-    [DataRow("fifo")]
-    [DataRow("hardlink")]
+    [DataRow("dangling")]
     [DataRow("directory")]
     public void RefusesUnsafeLeaf(string kind)
     {
@@ -95,14 +93,11 @@ public sealed class MemoryFileStoreTests
             case "symlink":
                 File.CreateSymbolicLink(file, outside);
                 break;
-            case "hardlink":
-                Assert.AreEqual(0, link(outside, file));
-                break;
-            case "directory":
-                Directory.CreateDirectory(file);
+            case "dangling":
+                File.CreateSymbolicLink(file, Path.Combine(_outside, "missing"));
                 break;
             default:
-                Assert.AreEqual(0, mkfifo(file, 0x180));
+                Directory.CreateDirectory(file);
                 break;
         }
 
@@ -121,59 +116,94 @@ public sealed class MemoryFileStoreTests
     }
 
     /// <summary>
-    /// Verifies that replacing a parent or leaf during staging cannot redirect publication to a sibling.
+    /// Verifies that an open reader retains the whole old file while fresh opens see the complete publication.
     /// </summary>
-    /// <param name="parent">Whether the parent directory is swapped.</param>
     [TestMethod]
-    [DataRow(true)]
-    [DataRow(false)]
-    public void StagedReplacementRejectsRedirect(bool parent)
+    public void PublicationSwitchesCompleteFile()
     {
-        var old = _store.Write(_project, PathInProject, "before", null, default);
         var file = Path.Combine(_parent, "file.md");
-        _observe = point =>
-        {
-            if (point != LifecycleCheckpoint.Staged)
-                return;
-            if (parent)
-            {
-                Directory.Move(_parent, _parent + "-moved");
-                Directory.CreateSymbolicLink(_parent, _outside);
-            }
-            else
-            {
-                File.Move(file, file + ".moved");
-                File.CreateSymbolicLink(file, Path.Combine(_outside, "file.md"));
-            }
-        };
-        Refused(() => _store.Write(_project, PathInProject, "after", old.ContentHash, default), "UNSAFE_PATH");
-        Assert.AreEqual("outside", File.ReadAllText(Path.Combine(_outside, "file.md")));
-        var original = parent ? Path.Combine(_parent + "-moved", "file.md") : file + ".moved";
-        Assert.AreEqual("before", File.ReadAllText(original));
-        Assert.IsEmpty(Directory.GetFiles(Path.GetDirectoryName(original)!, ".pm-*"));
-    }
-
-    /// <summary>
-    /// Verifies that an external edit after staging wins the final hash check without being overwritten.
-    /// </summary>
-    [TestMethod]
-    public void FinalHashDetectsManualEdit()
-    {
-        var old = _store.Write(_project, PathInProject, "before", null, default);
+        var before = new string('a', 65536);
+        var after = new string('b', 131072);
         _observe = point =>
         {
             if (point == LifecycleCheckpoint.Staged)
             {
-                File.WriteAllText(Path.Combine(_parent, "file.md"), "manual");
+                Assert.IsFalse(File.Exists(file));
+            }
+
+            if (point == LifecycleCheckpoint.Published)
+            {
+                Assert.AreEqual(before, File.ReadAllText(file));
             }
         };
-        Refused(() => _store.Write(_project, PathInProject, "after", old.ContentHash, default), "CONFLICT");
-        Assert.AreEqual("manual", File.ReadAllText(Path.Combine(_parent, "file.md")));
-        Assert.HasCount(1, Directory.GetFileSystemEntries(_parent));
+        var old = _store.Write(_project, PathInProject, before, null, default);
+        using var pinned = new StreamReader(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete), Encoding.UTF8);
+        _observe = point =>
+        {
+            if (point == LifecycleCheckpoint.Staged)
+            {
+                Assert.AreEqual(before, File.ReadAllText(file));
+            }
+
+            if (point == LifecycleCheckpoint.Published)
+            {
+                Assert.AreEqual(after, File.ReadAllText(file));
+                throw new IOException("injected after publication");
+            }
+        };
+        Assert.ThrowsExactly<IOException>(() => _store.Write(_project, PathInProject, after, old.ContentHash, default));
+        Assert.AreEqual(before, pinned.ReadToEnd());
+        Assert.AreEqual(after, File.ReadAllText(file));
+        Refused(() => _store.Delete(_project, PathInProject, old.ContentHash, default), "CONFLICT");
+        Assert.HasCount(1, Directory.GetFiles(_parent));
     }
 
     /// <summary>
-    /// Verifies that an interrupted short write remains private and cleanup preserves the original bytes.
+    /// Verifies that repeated fresh opens racing the publication move always see one complete version.
+    /// </summary>
+    /// <returns>The independent reader and writer verification.</returns>
+    [TestMethod]
+    public async Task FreshOpensDuringReplacementSeeCompleteVersions()
+    {
+        const int rounds = 32;
+        var first = new string('a', 65536);
+        var second = new string('b', 131072);
+        var hash = _store.Write(_project, PathInProject, first, null, default).ContentHash;
+        var file = Path.Combine(_parent, "file.md");
+        using var barrier = new Barrier(2);
+        void Meet() => Assert.IsTrue(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+        _observe = point =>
+        {
+            if (point is LifecycleCheckpoint.Staged or LifecycleCheckpoint.Published)
+            {
+                Meet();
+            }
+        };
+
+        var reader = Task.Run(() =>
+        {
+            for (var i = 0; i < rounds; i++)
+            {
+                Meet();
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                using var text = new StreamReader(stream);
+                var content = text.ReadToEnd();
+                Assert.IsTrue(content == first || content == second);
+                Meet();
+            }
+        });
+        var writer = Task.Run(() =>
+        {
+            for (var i = 0; i < rounds; i++)
+            {
+                hash = _store.Write(_project, PathInProject, i % 2 == 0 ? second : first, hash, default).ContentHash;
+            }
+        });
+        await Task.WhenAll(reader, writer);
+    }
+
+    /// <summary>
+    /// Verifies that an interruption with a partial staging file remains private and cleanup preserves the original bytes.
     /// </summary>
     [TestMethod]
     public void PartialStagingFileNeverReplacesOriginal()
@@ -182,7 +212,7 @@ public sealed class MemoryFileStoreTests
         var file = Path.Combine(_parent, "file.md");
         _observe = point =>
         {
-            if (point != LifecycleCheckpoint.StagingOpened)
+            if (point != LifecycleCheckpoint.Staged)
                 return;
             var staging = Directory.GetFiles(_parent, ".pm-*").Single();
             File.WriteAllText(staging, "part");
@@ -215,70 +245,75 @@ public sealed class MemoryFileStoreTests
     }
 
     /// <summary>
-    /// Verifies that the mount guard rejects a real kernel mount boundary using read-only descriptors.
+    /// Verifies that a cross-volume quarantine rename fails with the complete source still present, including during replay.
     /// </summary>
-    [TestMethod]
-    public void RejectsRealMountCrossing()
-    {
-        // The only non-fixture observation is procfs mount metadata. No mount privileges are needed.
-        using var root = LinuxDirectory.OpenRoot("/");
-        Refused(() => root.DirectoryAt("proc").Dispose(), "UNSAFE_PATH");
-        Refused(() => root.Lookup("proc"), "UNSAFE_PATH");
-    }
-
-    /// <summary>
-    /// Verifies that changing a candidate after inspection discards the list or search result.
-    /// </summary>
-    /// <param name="search">Whether the change occurs before reading search content.</param>
+    /// <param name="replay">Whether the interrupted tree already occupies the quarantine.</param>
     [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
-    public void NavigationDetectsChangedCandidate(bool search)
+    public void QuarantineRejectsCrossVolume(bool replay)
     {
-        _store.Write(_project, PathInProject, "original", null, default);
-        _observe = point =>
+        if (!OperatingSystem.IsLinux() || !DriveInfo.GetDrives().Any(drive => drive.Name == "/dev/shm")
+            || _root.StartsWith("/dev/shm/", StringComparison.Ordinal))
+            Assert.Inconclusive("This fixture requires a second writable Linux mount at /dev/shm.");
+
+        var remote = Path.Combine("/dev/shm", "pm-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(remote);
+        try
         {
-            if (point == (search ? LifecycleCheckpoint.SearchRead : LifecycleCheckpoint.ScanEntry))
-            {
-                File.AppendAllText(Path.Combine(_parent, "file.md"), "-changed");
-            }
-        };
-        if (search)
-        {
-            Refused(() => _store.Search(_project, "changed", "", 0, 50, default), "CONFLICT");
+            var local = Path.Combine(_root, _project.ToString("D"));
+            var other = Path.Combine(remote, _project.ToString("D"));
+            var original = replay ? other : local;
+            Directory.CreateDirectory(original);
+            File.WriteAllText(Path.Combine(original, "keep.md"), "untouched");
+            Assert.Throws<IOException>(() => _store.MoveToQuarantine(local, other));
+            Assert.AreEqual("untouched", File.ReadAllText(Path.Combine(original, "keep.md")));
+            Assert.IsFalse(Directory.Exists(replay ? local : other));
         }
-        else
+        finally
         {
-            Refused(() => _store.List(_project, "", 0, 50, default), "CONFLICT");
+            Directory.Delete(remote, recursive: true);
         }
     }
 
     /// <summary>
-    /// Verifies that a renamed directory cannot substitute an external subtree during enumeration or content retrieval.
+    /// Verifies that interruption during the replay rename leaves a state the next purge can finish.
     /// </summary>
-    /// <param name="search">Whether to redirect immediately before a search read.</param>
     [TestMethod]
-    [DataRow(false)]
-    [DataRow(true)]
-    public void NavigationRevalidatesSubtree(bool search)
+    public void ReplayRenameCanResume()
     {
-        _store.Write(_project, PathInProject, "inside", null, default);
+        _store.Write(_project, PathInProject, "note", null, default);
         _observe = point =>
         {
-            if (point == (search ? LifecycleCheckpoint.SearchRead : LifecycleCheckpoint.ScanEntry))
-            {
-                Directory.Move(_parent, _parent + "-moved");
-                Directory.CreateSymbolicLink(_parent, _outside);
-            }
+            if (point == LifecycleCheckpoint.Quarantined)
+                throw new IOException("interrupt");
         };
-        if (search)
+        Assert.ThrowsExactly<IOException>(() => _store.Purge(_project, default));
+        _observe = point =>
         {
-            Refused(() => _store.Search(_project, "outside", "nested", 0, 1, default), "UNSAFE_PATH");
-        }
-        else
-        {
-            Refused(() => _store.List(_project, "nested", 0, 1, default), "UNSAFE_PATH");
-        }
+            if (point == LifecycleCheckpoint.ReplayMoved)
+                throw new IOException("interrupt replay");
+        };
+        Assert.ThrowsExactly<IOException>(() => _store.Purge(_project, default));
+        Assert.AreEqual("note", File.ReadAllText(Path.Combine(_parent, "file.md")));
+        _observe = null;
+        _store.Purge(_project, default);
+        Assert.IsFalse(Directory.Exists(Path.Combine(_root, "projects", _project.ToString("D"))));
+        Assert.IsFalse(Directory.Exists(Path.Combine(_root, "quarantine", _project.ToString("D"))));
+    }
+
+    /// <summary>
+    /// Verifies that a pre-existing directory link refuses listing and search both at the root and within the selected subtree.
+    /// </summary>
+    /// <param name="folder">The requested subtree.</param>
+    [TestMethod]
+    [DataRow("")]
+    [DataRow("redirect")]
+    public void NavigationRefusesLinkedFolder(string folder)
+    {
+        Directory.CreateSymbolicLink(Path.Combine(Path.GetDirectoryName(_parent)!, "redirect"), _outside);
+        Refused(() => _store.List(_project, folder, 0, 1, default), "UNSAFE_PATH");
+        Refused(() => _store.Search(_project, "outside", folder, 0, 1, default), "UNSAFE_PATH");
     }
 
     /// <summary>
@@ -451,12 +486,6 @@ public sealed class MemoryFileStoreTests
         var exception = Assert.ThrowsExactly<MemoryFileException>(operation);
         Assert.AreEqual(code, exception.Code);
     }
-
-    [DllImport("libc", SetLastError = true)]
-    private static extern int link(string existing, string destination);
-
-    [DllImport("libc", SetLastError = true)]
-    private static extern int mkfifo(string name, uint mode);
 
     #endregion
 

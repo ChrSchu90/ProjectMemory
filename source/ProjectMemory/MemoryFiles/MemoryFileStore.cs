@@ -59,9 +59,11 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
     /// <returns>The selected text, address and whole-file hash.</returns>
     internal MemoryReadResult Read(Guid id, string path, int startLine, int lineCount)
     {
-        using var parent = OpenParent(id, path, false);
-        var (bytes, _) = parent.Read(Leaf(path), MaximumBytes);
-        VerifyParent(parent, id, path);
+        var file = MemoryPath(id, path, create: false);
+        RequireFile(file);
+        using var stream = OpenRead(file);
+        checkpoint?.Invoke(LifecycleCheckpoint.Reading);
+        var bytes = ReadBytes(stream);
         var text = Decode(bytes);
 
         var start = SkipLines(text, 0, startLine - 1);
@@ -82,43 +84,52 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
     {
         if (content.Length > MaximumBytes || Utf8.GetByteCount(content) > MaximumBytes)
             throw new MemoryFileException("CONTENT_TOO_LARGE");
+        token.ThrowIfCancellationRequested();
         var bytes = Utf8.GetBytes(content);
-        var name = Leaf(path);
-        using var parent = OpenParent(id, path, expected is null);
-        if (expected is not null)
+        var file = MemoryPath(id, path, create: expected is null);
+        if (expected is null)
         {
-            RequireHash(parent, name, expected);
+            if (FilePresent(file))
+                throw new MemoryFileException("ALREADY_EXISTS");
         }
-        else if (parent.Lookup(name) is { } existing)
+        else
         {
-            throw new MemoryFileException(existing.IsRegular && existing.Links == 1 ? "ALREADY_EXISTS" : "UNSAFE_PATH");
+            RequireHash(file, expected);
         }
 
-        var temporary = ".pm-" + Guid.NewGuid().ToString("N");
-        using var handle = parent.CreateTemporary(temporary);
+        var result = new MemoryChangeResult(path, Hash(bytes));
+        var temporary = Path.Combine(Path.GetDirectoryName(file)!, ".pm-" + Guid.NewGuid().ToString("N"));
+        var settings = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows())
+        {
+            settings.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        // Only a successful CreateNew grants ownership of the temporary name.
+        var stream = new FileStream(temporary, settings);
         var published = false;
         try
         {
-            checkpoint?.Invoke(LifecycleCheckpoint.StagingOpened);
-            RandomAccess.Write(handle, bytes, 0);
-            RandomAccess.FlushToDisk(handle);
+            using (stream)
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+
             checkpoint?.Invoke(LifecycleCheckpoint.Staged);
-            var original = expected is null ? null : RequireHash(parent, name, expected);
-            VerifyParent(parent, id, path);
-            if (!parent.OwnsTemporary(temporary, handle) || (original is not null && parent.Lookup(name) != original))
-                throw new MemoryFileException("CONFLICT");
             token.ThrowIfCancellationRequested();
-            parent.Rename(temporary, parent, name, noReplace: expected is null);
+            // The exclusive project lease protects the create check and hash CAS.
+            // Both names share a parent. Use the runtime's rename path for both operations.
+            File.Move(temporary, file, overwrite: true);
             published = true;
-            parent.Sync();
-            return new MemoryChangeResult(path, Hash(bytes));
+            checkpoint?.Invoke(LifecycleCheckpoint.Published);
+            return result;
         }
         finally
         {
-            if (!published && parent.OwnsTemporary(temporary, handle))
+            if (!published)
             {
-                parent.Remove(temporary);
-                parent.Sync();
+                File.Delete(temporary);
             }
         }
     }
@@ -133,15 +144,10 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
     /// <returns>The address and the verified hash of the deleted bytes.</returns>
     internal MemoryChangeResult Delete(Guid id, string path, string expected, CancellationToken token)
     {
-        using var parent = OpenParent(id, path, false);
-        var name = Leaf(path);
-        var original = RequireHash(parent, name, expected);
-        VerifyParent(parent, id, path);
-        if (parent.Lookup(name) != original)
-            throw new MemoryFileException("CONFLICT");
+        var file = MemoryPath(id, path, create: false);
+        RequireHash(file, expected);
         token.ThrowIfCancellationRequested();
-        parent.Remove(name);
-        parent.Sync();
+        File.Delete(file);
         return new MemoryChangeResult(path, expected.ToLowerInvariant());
     }
 
@@ -152,35 +158,49 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
     /// <param name="token">Cancellation between recoverable steps.</param>
     internal void Purge(Guid id, CancellationToken token)
     {
-        using var root = LinuxDirectory.OpenRoot(options.Value.DataDirectory);
-        using var projects = root.DirectoryAt("projects", true);
-        using var quarantine = root.DirectoryAt("quarantine", true);
+        var root = DataRoot();
+        var projects = DirectoryAt(root, "projects", create: true);
+        var quarantine = DirectoryAt(root, "quarantine", create: true);
         var name = id.ToString("D");
-        var source = projects.Lookup(name);
-        var target = quarantine.Lookup(name);
-        if (source is not null)
-        {
-            if (!source.IsDirectory || target is not null)
-                throw new MemoryFileException("UNSAFE_PATH");
-            projects.Rename(name, quarantine, name, noReplace: true);
-        }
-
-        // Replay must flush both parents even when the previous call already performed the rename.
-        quarantine.Sync();
-        projects.Sync();
+        var source = Path.Combine(projects, name);
+        var target = Path.Combine(quarantine, name);
+        MoveToQuarantine(source, target);
         checkpoint?.Invoke(LifecycleCheckpoint.Quarantined);
         token.ThrowIfCancellationRequested();
-        if (quarantine.Lookup(name) is not null)
+        if (Attributes(target) is not null)
         {
-            using var tree = quarantine.DirectoryAt(name);
-            PurgeChildren(tree, token, 0);
-            quarantine.Remove(name, directory: true);
+            PurgeChildren(target, token, 0);
+            Directory.Delete(target);
         }
 
-        quarantine.Sync();
-        if (projects.Lookup(name) is not null || quarantine.Lookup(name) is not null)
+        if (Attributes(source) is not null || Attributes(target) is not null)
             throw new MemoryFileException("UNSAFE_PATH");
         checkpoint?.Invoke(LifecycleCheckpoint.Purged);
+    }
+
+    /// <summary>
+    /// Moves one blocked project between its validated parents. Directory.Move requires a same-filesystem rename.
+    /// </summary>
+    /// <param name="source">The server-derived project UUID path.</param>
+    /// <param name="target">The same UUID in the private quarantine.</param>
+    internal void MoveToQuarantine(string source, string target)
+    {
+        var original = ExactAttributes(source);
+        var quarantined = ExactAttributes(target);
+        if (original?.HasFlag(FileAttributes.Directory) == false || quarantined?.HasFlag(FileAttributes.Directory) == false
+            || (original is not null && quarantined is not null))
+            throw new MemoryFileException("UNSAFE_PATH");
+        if (quarantined is not null)
+        {
+            // A restored quarantine can be on a different volume. Prove the current
+            // rename boundary before purging. Both names remain blocked by the intent.
+            Directory.Move(target, source);
+            checkpoint?.Invoke(LifecycleCheckpoint.ReplayMoved);
+        }
+        else if (original is null)
+            return;
+
+        Directory.Move(source, target);
     }
 
     #endregion
@@ -198,64 +218,146 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
             && Utf8.GetByteCount(path) <= 1024;
     }
 
-    private void PurgeChildren(LinuxDirectory parent, CancellationToken token, int depth)
+    private void PurgeChildren(string parent, CancellationToken token, int depth)
     {
-        if (depth > 128)
+        if (depth > MaximumTreeDepth)
             throw new MemoryFileException("UNSAFE_PATH");
-        foreach (var name in parent.Names())
+        foreach (var path in Directory.EnumerateFileSystemEntries(parent))
         {
             token.ThrowIfCancellationRequested();
-            var identity = parent.Lookup(name) ?? throw new MemoryFileException("CONFLICT");
-            if (identity.IsDirectory)
+            var attributes = Attributes(path) ?? throw new MemoryFileException("CONFLICT");
+            if (attributes.HasFlag(FileAttributes.Directory))
             {
-                using var child = parent.DirectoryAt(name);
-                PurgeChildren(child, token, depth + 1);
-                parent.Remove(name, directory: true);
+                PurgeChildren(path, token, depth + 1);
+                Directory.Delete(path);
             }
             else
             {
-                if (!identity.IsRegular || identity.Links != 1)
-                    throw new MemoryFileException("UNSAFE_PATH");
-                parent.Remove(name);
+                File.Delete(path);
             }
 
             checkpoint?.Invoke(LifecycleCheckpoint.PurgeEntry);
         }
-
-        parent.Sync();
     }
 
-    private LinuxDirectory OpenParent(Guid id, string path, bool create)
+    private string DataRoot()
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.Value.DataDirectory));
+        if (Attributes(root) is not { } attributes || !attributes.HasFlag(FileAttributes.Directory))
+            throw new MemoryFileException("STORAGE_UNAVAILABLE");
+        return root;
+    }
+
+    private string MemoryPath(Guid id, string path, bool create)
     {
         if (!ValidPath(path))
             throw new MemoryFileException("INVALID_PATH");
-        using var root = LinuxDirectory.OpenRoot(options.Value.DataDirectory);
         var slash = path.LastIndexOf('/');
-        return OpenFolder(root, id, slash < 0 ? "" : path[..slash], create);
+        var parent = ProjectFolder(id, slash < 0 ? "" : path[..slash], create);
+        return Path.Combine(parent, Leaf(path));
     }
 
-    private static LinuxDirectory OpenFolder(LinuxDirectory root, Guid id, string folder, bool create)
+    private string ProjectFolder(Guid id, string folder, bool create)
     {
-        using var projects = root.DirectoryAt("projects", create);
-        var current = projects.DirectoryAt(id.ToString("D"), create);
-        if (folder.Length == 0)
-            return current;
-        try
+        var projects = DirectoryAt(DataRoot(), "projects", create);
+        var current = DirectoryAt(projects, id.ToString("D"), create);
+        if (folder.Length > 0)
         {
             foreach (var part in folder.Split('/'))
             {
-                var next = current.DirectoryAt(part, create);
-                current.Dispose();
-                current = next;
+                current = DirectoryAt(current, part, create);
             }
+        }
 
-            return current;
-        }
-        catch
+        return current;
+    }
+
+    private static string DirectoryAt(string parent, string name, bool create)
+    {
+        var path = Path.Combine(parent, name);
+        if (ExactAttributes(path) is { } existing)
         {
-            current.Dispose();
-            throw;
+            if (!existing.HasFlag(FileAttributes.Directory))
+                throw new MemoryFileException("UNSAFE_PATH");
         }
+        else if (!create)
+            throw new MemoryFileException("MEMORY_NOT_FOUND");
+        else if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(path);
+        }
+        else
+        {
+            Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        return path;
+    }
+
+    private static FileAttributes? Attributes(string path)
+    {
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(path);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+
+        if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            throw new MemoryFileException("UNSAFE_PATH");
+        return attributes;
+    }
+
+    private static FileAttributes? ExactAttributes(string path)
+    {
+        var attributes = Attributes(path);
+        if (attributes is not null)
+        {
+            // Even on case-folding volumes only the actual ordinal spelling is addressable.
+            var parent = Path.GetDirectoryName(path)!;
+            if (!Directory.EnumerateFileSystemEntries(parent, Path.GetFileName(path)).Contains(path, StringComparer.Ordinal))
+                throw new MemoryFileException("UNSAFE_PATH");
+        }
+
+        return attributes;
+    }
+
+    private static bool FilePresent(string file)
+    {
+        var attributes = ExactAttributes(file);
+        if (attributes?.HasFlag(FileAttributes.Directory) == true)
+            throw new MemoryFileException("UNSAFE_PATH");
+        return attributes is not null;
+    }
+
+    private static void RequireFile(string file)
+    {
+        if (!FilePresent(file))
+            throw new MemoryFileException("MEMORY_NOT_FOUND");
+    }
+
+    private static FileStream OpenRead(string file) =>
+        new(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+
+    private static byte[] ReadBytes(FileStream stream)
+    {
+        var length = stream.Length;
+        if (length > MaximumBytes)
+            throw new MemoryFileException("CONTENT_TOO_LARGE");
+        var bytes = new byte[(int)length];
+        stream.ReadExactly(bytes);
+        return bytes;
+    }
+
+    private static void RequireHash(string file, string expected)
+    {
+        RequireFile(file);
+        using var stream = OpenRead(file);
+        if (!string.Equals(Hash(ReadBytes(stream)), expected, StringComparison.OrdinalIgnoreCase))
+            throw new MemoryFileException("CONFLICT");
     }
 
     private static string Decode(byte[] bytes)
@@ -268,21 +370,6 @@ internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> opt
         {
             throw new MemoryFileException("INVALID_ENCODING");
         }
-    }
-
-    private void VerifyParent(LinuxDirectory pinned, Guid id, string path)
-    {
-        using var current = OpenParent(id, path, false);
-        if (!pinned.SameDirectory(current))
-            throw new MemoryFileException("CONFLICT");
-    }
-
-    private static FileIdentity RequireHash(LinuxDirectory parent, string name, string expected)
-    {
-        var (bytes, identity) = parent.Read(name, MaximumBytes);
-        if (!string.Equals(Hash(bytes), expected, StringComparison.OrdinalIgnoreCase))
-            throw new MemoryFileException("CONFLICT");
-        return identity;
     }
 
     private static string Leaf(string path) => path[(path.LastIndexOf('/') + 1)..];
@@ -310,19 +397,23 @@ internal enum LifecycleCheckpoint
 {
     /// <summary>The first context lookup has completed.</summary>
     Routed,
-    /// <summary>The private temporary file has been opened.</summary>
-    StagingOpened,
+    /// <summary>A read has entered the authorized file operation.</summary>
+    Reading,
     /// <summary>The temporary file is complete and flushed.</summary>
     Staged,
+    /// <summary>The complete target is visible, before the result is returned.</summary>
+    Published,
     /// <summary>The deletion intent and archive block have committed.</summary>
     IntentCommitted,
-    /// <summary>The quarantine rename and parent directory flushes have completed.</summary>
+    /// <summary>The surviving quarantined tree was moved back under its blocked UUID during replay.</summary>
+    ReplayMoved,
+    /// <summary>The quarantine move has completed or the tree was already absent.</summary>
     Quarantined,
     /// <summary>A quarantine child was removed.</summary>
     PurgeEntry,
-    /// <summary>The tree removal has been flushed, before registry cleanup.</summary>
+    /// <summary>Both tree names are absent, before registry cleanup.</summary>
     Purged,
-    /// <summary>A navigation candidate has been inspected, before checking its name again.</summary>
+    /// <summary>An addressable navigation candidate has been inspected.</summary>
     ScanEntry,
     /// <summary>Search is about to reopen an enumerated file for its bounded content read.</summary>
     SearchRead

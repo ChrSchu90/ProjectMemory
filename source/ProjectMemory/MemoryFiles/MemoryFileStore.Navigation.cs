@@ -3,6 +3,7 @@ namespace ProjectMemory.MemoryFiles;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using ProjectMemory.Tools;
@@ -72,24 +73,24 @@ internal sealed partial class MemoryFileStore
         var matches = new List<MemorySearchHit>(limit);
         var matchCount = 0;
         var skippedFiles = 0;
-        ulong bytesRead = 0;
+        long bytesRead = 0;
         foreach (var entry in entries)
         {
             CheckBudget(started, token);
-            if (entry.Identity.Size > MaximumBytes)
+            checkpoint?.Invoke(LifecycleCheckpoint.SearchRead);
+            CheckBudget(started, token);
+            using var stream = OpenRead(entry.File);
+            var length = stream.Length;
+            if (length > MaximumBytes)
             {
                 skippedFiles++;
                 continue;
             }
 
-            bytesRead += entry.Identity.Size;
+            bytesRead += length;
             if (bytesRead > MaximumSearchBytes)
                 throw new MemoryFileException("SCAN_LIMIT");
-            checkpoint?.Invoke(LifecycleCheckpoint.SearchRead);
-            CheckBudget(started, token);
-            using var parent = OpenParent(id, entry.Path, false);
-            var (bytes, _) = parent.Read(Leaf(entry.Path), MaximumBytes, entry.Identity);
-            VerifyParent(parent, id, entry.Path);
+            var bytes = ReadBytes(stream);
             string content;
             try
             {
@@ -119,18 +120,17 @@ internal sealed partial class MemoryFileStore
 
     #region Private Methods
 
-    private List<(string Path, FileIdentity Identity)> Scan(Guid id, string folder, int offset, int limit, long started, CancellationToken token)
+    private List<(string Path, string File)> Scan(Guid id, string folder, int offset, int limit, long started, CancellationToken token)
     {
         if (offset < 0 || limit is < 1 or > 200)
             throw new MemoryFileException("INVALID_ARGUMENT");
         if (folder.Length > 0 && !ValidRelativePath(folder, 15))
             throw new MemoryFileException("INVALID_PATH");
         CheckBudget(started, token);
-        using var root = LinuxDirectory.OpenRoot(options.Value.DataDirectory);
-        LinuxDirectory scope;
+        string scope;
         try
         {
-            scope = OpenFolder(root, id, folder, false);
+            scope = ProjectFolder(id, folder, create: false);
         }
         catch (MemoryFileException ex) when (ex.Code == "MEMORY_NOT_FOUND" && folder.Length == 0)
         {
@@ -138,54 +138,38 @@ internal sealed partial class MemoryFileStore
             return [];
         }
 
-        var entries = new List<(string Path, FileIdentity Identity)>();
+        var entries = new List<(string Path, string File)>();
         var visited = 0;
-        using (scope)
-        {
-            Visit(scope, folder);
-        }
-
+        Visit(scope, folder);
         entries.Sort((a, b) => StringComparer.Ordinal.Compare(a.Path, b.Path));
         CheckBudget(started, token);
         return entries;
 
-        void Visit(LinuxDirectory directory, string prefix)
+        void Visit(string directory, string prefix)
         {
-            foreach (var name in directory.Names())
+            foreach (var file in Directory.EnumerateFileSystemEntries(directory))
             {
                 CheckBudget(started, token);
                 if (++visited > MaximumEntries)
                     throw new MemoryFileException("SCAN_LIMIT");
+                var name = Path.GetFileName(file);
                 var path = prefix.Length == 0 ? name : prefix + "/" + name;
-                // An invalid component can never lead to an addressable M3 memory.
                 if (!ValidRelativePath(path, 16))
                     continue;
-                var identity = directory.Lookup(name) ?? throw new MemoryFileException("CONFLICT");
-                if (identity.IsDirectory)
+                var attributes = Attributes(file) ?? throw new MemoryFileException("MEMORY_NOT_FOUND");
+                if (attributes.HasFlag(FileAttributes.Directory))
                 {
                     if (ValidRelativePath(path, 15))
                     {
-                        using var child = directory.DirectoryAt(name);
-                        Visit(child, path);
+                        Visit(file, path);
                     }
-                }
-                else if (!identity.IsRegular || identity.Links != 1)
-                {
-                    throw new MemoryFileException("UNSAFE_PATH");
                 }
                 else if (path.EndsWith(".md", StringComparison.Ordinal))
                 {
                     checkpoint?.Invoke(LifecycleCheckpoint.ScanEntry);
-                    if (directory.Lookup(name) != identity)
-                        throw new MemoryFileException("CONFLICT");
-                    entries.Add((path, identity));
+                    entries.Add((path, file));
                 }
             }
-
-            using var currentRoot = LinuxDirectory.OpenRoot(options.Value.DataDirectory);
-            using var current = OpenFolder(currentRoot, id, prefix, false);
-            if (!directory.MatchesSnapshot(current))
-                throw new MemoryFileException("CONFLICT");
         }
     }
 

@@ -54,7 +54,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
         [Description("Number of paths to skip."), Range(0, int.MaxValue)] int offset = 0,
         [Description("Page size from 1 through 200."), Range(1, 200)] int limit = 50,
         CancellationToken cancellationToken = default) =>
-        AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.List(id, folder, offset, limit, cancellationToken), cancellationToken), logger);
+        AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Read, id => files.List(id, folder, offset, limit, cancellationToken), cancellationToken), logger);
 
     /// <summary>
     /// Returns the first literal content match in each matching Markdown file.
@@ -75,7 +75,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
         [Description("Number of matching files to skip."), Range(0, int.MaxValue)] int offset = 0,
         [Description("Page size from 1 through 200."), Range(1, 200)] int limit = 50,
         CancellationToken cancellationToken = default) =>
-        AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.Search(id, query, folder, offset, limit, cancellationToken), cancellationToken), logger);
+        AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Read, id => files.Search(id, query, folder, offset, limit, cancellationToken), cancellationToken), logger);
 
     /// <summary>
     /// Create a Markdown file exclusively at the exact project-relative path.
@@ -93,7 +93,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
         [Description("Complete UTF-8 Markdown text, up to 1048576 bytes."), MaxLength(MemoryFileStore.MaximumBytes)] string content,
         CancellationToken cancellationToken = default)
     {
-        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.Write(id, path, content, null, cancellationToken), cancellationToken), logger);
+        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Write, id => files.Write(id, path, content, null, cancellationToken), cancellationToken), logger);
     }
 
     /// <summary>
@@ -116,7 +116,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
     {
         if (start_line < 1 || line_count is < 1 or > MemoryFileStore.MaximumBytes + 1)
             return AdministrationTools.ExecuteAsync(() => Task.FromResult(AdministrationResponse<MemoryReadResult>.Failure("INVALID_ARGUMENT")), logger);
-        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.Read(id, path, start_line, line_count), cancellationToken), logger);
+        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Read, id => files.Read(id, path, start_line, line_count), cancellationToken), logger);
     }
 
     /// <summary>
@@ -139,7 +139,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
     {
         if (!MemoryManager.ValidHash(expected_content_hash))
             return AdministrationTools.ExecuteAsync(() => Task.FromResult(AdministrationResponse<MemoryChangeResult>.Failure("INVALID_ARGUMENT")), logger);
-        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.Write(id, path, content, expected_content_hash, cancellationToken), cancellationToken), logger);
+        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Write, id => files.Write(id, path, content, expected_content_hash, cancellationToken), cancellationToken), logger);
     }
 
     /// <summary>
@@ -160,7 +160,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
     {
         if (!MemoryManager.ValidHash(expected_content_hash))
             return AdministrationTools.ExecuteAsync(() => Task.FromResult(AdministrationResponse<MemoryChangeResult>.Failure("INVALID_ARGUMENT")), logger);
-        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, id => files.Delete(id, path, expected_content_hash, cancellationToken), cancellationToken), logger);
+        return AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Write, id => files.Delete(id, path, expected_content_hash, cancellationToken), cancellationToken), logger);
     }
 
     #endregion
