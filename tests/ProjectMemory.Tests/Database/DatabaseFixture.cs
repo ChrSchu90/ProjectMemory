@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database;
 using ProjectMemory.Project;
+using ProjectMemory.MemoryFiles;
 using ProjectMemory.Routing;
 
 /// <summary>
@@ -78,6 +79,8 @@ internal sealed class DatabaseFixture(string root, ServiceProvider services) : I
 
         collection.AddPersistence();
         collection.AddSingleton<ProjectManager>();
+        collection.AddSingleton<MemoryFileStore>();
+        collection.AddSingleton<ProjectDeletion>();
         var services = collection.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
 
         var fixture = new DatabaseFixture(root, services);

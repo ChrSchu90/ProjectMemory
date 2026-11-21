@@ -91,7 +91,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         var route = await dbContext.ContextBindings
                         .AsNoTracking()
                         .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName)
-                        .Select(binding => new ProjectRoute(binding.RoutingProject.MemoryProjectId, binding.RoutingProject.MemoryProjectName, binding.RoutingProject.Status, binding.Status))
+                        .Select(binding => new ProjectRoute(binding.RoutingProject.MemoryProjectId, binding.RoutingProject.MemoryProjectName, binding.RoutingProject.DeletionPending ? ProjectStatus.Archived : binding.RoutingProject.Status, binding.Status))
                         .SingleOrDefaultAsync(cancellationToken)
                         .ConfigureAwait(false);
 
@@ -167,7 +167,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
             throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var affectedRows = await dbContext.RoutingProjects.Where(project => project.MemoryProjectId == memoryProjectId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var affectedRows = await dbContext.RoutingProjects.Where(project => project.MemoryProjectId == memoryProjectId && !project.DeletionPending).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         switch (affectedRows)
         {
             case 0:
@@ -212,7 +212,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         if (project == null)
             throw new InvalidOperationException($"No registered project routing exists for project '{memoryProjectId:D}'.");
 
-        if (project.Status != ProjectStatus.Active)
+        if (project.Status != ProjectStatus.Active || project.DeletionPending)
             throw new InvalidOperationException("The selected project is archived.");
 
         var entity = new ContextBindingEntity
@@ -252,7 +252,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var updatedAt = DateTimeOffset.UtcNow;
         var affectedRows = await dbContext.RoutingProjects
-                               .Where(project => project.MemoryProjectId == memoryProjectId && project.Status == expectedStatus)
+                               .Where(project => project.MemoryProjectId == memoryProjectId && project.Status == expectedStatus && !project.DeletionPending)
                                .ExecuteUpdateAsync(setters => setters
                                        .SetProperty(project => project.Status, newStatus)
                                        .SetProperty(project => project.UpdatedAt, updatedAt),
@@ -284,7 +284,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var updatedAt = DateTimeOffset.UtcNow;
         var affectedRows = await dbContext.ContextBindings
-                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName && binding.Status == expectedStatus)
+                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName && binding.Status == expectedStatus && !binding.RoutingProject.DeletionPending)
                                .ExecuteUpdateAsync(
                                    setters => setters
                                        .SetProperty(binding => binding.Status, newStatus)
@@ -366,6 +366,8 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         var project = await context.RoutingProjects.SingleOrDefaultAsync(item => item.MemoryProjectId == projectId, cancellationToken).ConfigureAwait(false);
         if (project is null)
             return new(null, Error: RegistryError.ProjectNotFound);
+        if (project.DeletionPending)
+            return new(null, Error: RegistryError.ProjectBlocked);
         if (project.Status != ProjectStatus.Active)
             return new(null, Error: RegistryError.ProjectArchived);
         var existing = await context.ContextBindings.SingleOrDefaultAsync(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName, cancellationToken).ConfigureAwait(false);
@@ -395,6 +397,8 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         var project = await context.RoutingProjects.SingleOrDefaultAsync(item => item.MemoryProjectId == projectId, cancellationToken).ConfigureAwait(false);
         if (project is null)
             return new(null, Error: RegistryError.ProjectNotFound);
+        if (project.DeletionPending)
+            return new(null, Error: RegistryError.ProjectBlocked);
         var changed = project.Status != status;
         if (changed)
         {

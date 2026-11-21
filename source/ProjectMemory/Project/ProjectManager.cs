@@ -12,7 +12,8 @@ using ProjectMemory.Tools;
 /// </summary>
 /// <param name="registry">The existing SQLite registry boundary.</param>
 /// <param name="routing">The existing fail-closed route resolver.</param>
-internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager routing)
+/// <param name="locks">Coordinates changes to project access with memory operations.</param>
+internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager routing, ProjectLocks locks)
 {
     #region Static Fields
 
@@ -105,7 +106,7 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     {
         if (!ValidProjectId(projectId, out var id))
             return AdministrationResponse<ProjectStatusResult>.Failure("INVALID_ARGUMENT");
-        var change = await registry.SetProjectStatusAsync(id, status, cancellationToken).ConfigureAwait(false);
+        var change = await locks.RunAsync(id, () => registry.SetProjectStatusAsync(id, status, cancellationToken), cancellationToken).ConfigureAwait(false);
         return change.Error is { } error ? Failure<ProjectStatusResult>(error) : AdministrationResponse<ProjectStatusResult>.Success(new ProjectStatusResult(Describe(change.Value!), change.Changed));
     }
 
@@ -136,7 +137,14 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     {
         if (!ContextId.TryParse(context, out var contextId))
             return AdministrationResponse<ContextUnbindingResult>.Failure("INVALID_CONTEXT");
-        var removed = await registry.TryRemoveBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
+        var binding = await registry.FindBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
+        if (binding is null)
+            return AdministrationResponse<ContextUnbindingResult>.Failure("CONTEXT_UNBOUND");
+        var removed = await locks.RunAsync(binding.MemoryProjectId, async () =>
+        {
+            var current = await registry.FindBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
+            return current?.MemoryProjectId == binding.MemoryProjectId && await registry.TryRemoveBindingAsync(contextId, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
         return removed ? AdministrationResponse<ContextUnbindingResult>.Success(new ContextUnbindingResult(contextId.ToString(), true)) : AdministrationResponse<ContextUnbindingResult>.Failure("CONTEXT_UNBOUND");
     }
 
@@ -159,11 +167,17 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
         };
     }
 
+    /// <summary>
+    /// Validates a nonempty hyphenated project UUID without trimming.
+    /// </summary>
+    /// <param name="value">The supplied identifier.</param>
+    /// <param name="id">The parsed identifier.</param>
+    /// <returns>Whether the identifier is valid.</returns>
+    internal static bool ValidProjectId(string? value, out Guid id) => Guid.TryParseExact(value, "D", out id) && value!.Length == 36 && id != Guid.Empty;
+
     #endregion
 
     #region Private Methods
-
-    private static bool ValidProjectId(string? value, out Guid id) => Guid.TryParseExact(value, "D", out id) && id != Guid.Empty;
 
     private static bool ValidPage(int offset, int limit) => offset >= 0 && limit is >= 1 and <= 200;
 
@@ -172,6 +186,7 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     private static AdministrationResponse<TData> Failure<TData>(RegistryError error) where TData : class => AdministrationResponse<TData>.Failure(error switch
     {
         RegistryError.ProjectNotFound => "PROJECT_NOT_FOUND",
+        RegistryError.ProjectBlocked => "PROJECT_BLOCKED",
         RegistryError.ProjectArchived => "PROJECT_ARCHIVED",
         _ => "CONFLICT"
     });

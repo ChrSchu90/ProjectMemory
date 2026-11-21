@@ -267,7 +267,7 @@ public sealed class AdministrationToolsTests : ServerHostTestBase
             await context.Database.ExecuteSqlRawAsync("DROP TABLE ContextBindings;");
         }
 
-        var tools = new AdministrationTools(fixture.Services.GetRequiredService<ProjectManager>(), NullLogger<AdministrationTools>.Instance);
+        var tools = new AdministrationTools(fixture.Services.GetRequiredService<ProjectManager>(), fixture.Services.GetRequiredService<ProjectDeletion>(), NullLogger<AdministrationTools>.Instance);
         var result = await tools.ResolveContextAsync("chat:Missing");
 
         Assert.IsTrue(result.IsError);
@@ -289,32 +289,6 @@ public sealed class AdministrationToolsTests : ServerHostTestBase
     private static string ProjectId(JsonElement response) => response.GetProperty("data").GetProperty("project").GetProperty("project_id").GetString()!;
 
     private static string ResolvedId(JsonElement response) => response.GetProperty("data").GetProperty("project_id").GetString()!;
-
-    private static async Task<JsonElement> CallToolAsync(HttpClient client, string name, object arguments, string protocol = "2025-11-25", string? error = null)
-    {
-        var body = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 21, method = "tools/call", @params = new { name, arguments } });
-
-        using var response = await SendAsync(client, body, protocol);
-        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var result = await ReadResultAsync(response);
-        var content = result.GetProperty("structuredContent");
-        Assert.AreEqual("1.0", content.GetProperty("contract_version").GetString());
-        Assert.AreEqual(error is null, content.GetProperty("ok").GetBoolean());
-        Assert.AreEqual(error is not null, result.TryGetProperty("isError", out var flag) && flag.GetBoolean());
-        using var fallback = JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!);
-        Assert.IsTrue(JsonElement.DeepEquals(content, fallback.RootElement));
-        if (error is not null)
-        {
-            Assert.AreEqual(error, content.GetProperty("error").GetProperty("code").GetString());
-            Assert.AreEqual(JsonValueKind.Null, content.GetProperty("data").ValueKind);
-        }
-        else
-        {
-            Assert.AreEqual(JsonValueKind.Null, content.GetProperty("error").ValueKind);
-        }
-
-        return content;
-    }
 
     #endregion
 

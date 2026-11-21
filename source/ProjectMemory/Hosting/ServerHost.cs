@@ -15,6 +15,7 @@ using ModelContextProtocol.Server;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database;
 using ProjectMemory.Operations;
+using ProjectMemory.MemoryFiles;
 using ProjectMemory.Project;
 using ProjectMemory.Tools;
 using Serilog.Core;
@@ -102,6 +103,9 @@ internal static class ServerHost
         // Register the existing SQLite persistence and routing services.
         builder.Services.AddPersistence();
         builder.Services.AddSingleton<ProjectManager>();
+        builder.Services.AddSingleton<MemoryFileStore>();
+        builder.Services.AddSingleton<MemoryManager>();
+        builder.Services.AddSingleton<ProjectDeletion>();
 
         // Register the HTTP MCP transport and the project and context administration tools.
         builder.Services.AddMcpServer(options => options.ServerInfo = new Implementation { Name = "ProjectMemory", Version = Version })
@@ -111,6 +115,7 @@ internal static class ServerHost
                 options.SessionMode = HttpServerSessionMode.Stateless;
             })
             .WithTools<AdministrationTools>(AdministrationTools.SerializerOptions)
+            .WithTools<MemoryTools>(AdministrationTools.SerializerOptions)
             .WithRequestFilters(filters => filters.AddCallToolFilter(AdministrationTools.ValidateArguments));
 
         // Register the storage readiness check; liveness will exclude storage checks.
@@ -129,6 +134,7 @@ internal static class ServerHost
 
             // Complete database initialization before the MCP endpoint can accept requests.
             await app.Services.MigrateDatabaseAsync();
+            await app.Services.GetRequiredService<ProjectDeletion>().RecoverAsync(app.Lifetime.ApplicationStopping);
 
             // Protect MCP requests and map the private operational and transport endpoints.
             app.UseMiddleware<OptionalBearerMiddleware>();

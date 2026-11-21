@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -16,6 +17,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Configuration;
 using ProjectMemory.Hosting;
 
@@ -99,6 +101,41 @@ public abstract class ServerHostTestBase
         return json.RootElement.Clone();
     }
 
+    /// <summary>
+    /// Calls the named tool and verifies both encodings of its expected envelope.
+    /// </summary>
+    /// <param name="client">The isolated MCP client.</param>
+    /// <param name="name">The published tool name.</param>
+    /// <param name="arguments">The flat tool arguments.</param>
+    /// <param name="protocol">The requested MCP protocol revision.</param>
+    /// <param name="error">The expected error code, or null for success.</param>
+    /// <returns>The verified envelope.</returns>
+    protected static async Task<JsonElement> CallToolAsync(HttpClient client, string name, object arguments, string protocol = "2025-11-25", string? error = null)
+    {
+        var body = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 21, method = "tools/call", @params = new { name, arguments } });
+
+        using var response = await SendAsync(client, body, protocol);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var result = await ReadResultAsync(response);
+        var content = result.GetProperty("structuredContent");
+        Assert.AreEqual("1.0", content.GetProperty("contract_version").GetString());
+        Assert.AreEqual(error is null, content.GetProperty("ok").GetBoolean(), content.GetRawText());
+        Assert.AreEqual(error is not null, result.TryGetProperty("isError", out var flag) && flag.GetBoolean());
+        using var fallback = JsonDocument.Parse(result.GetProperty("content")[0].GetProperty("text").GetString()!);
+        Assert.IsTrue(JsonElement.DeepEquals(content, fallback.RootElement));
+        if (error is not null)
+        {
+            Assert.AreEqual(error, content.GetProperty("error").GetProperty("code").GetString());
+            Assert.AreEqual(JsonValueKind.Null, content.GetProperty("data").ValueKind);
+        }
+        else
+        {
+            Assert.AreEqual(JsonValueKind.Null, content.GetProperty("error").ValueKind);
+        }
+
+        return content;
+    }
+
     #endregion
 
     #region Private Methods
@@ -133,6 +170,11 @@ public abstract class ServerHostTestBase
         /// Gets the isolated data directory used by this fixture.
         /// </summary>
         public string Root => root;
+
+        /// <summary>
+        /// Gets the services of this isolated host for deterministic coordination tests.
+        /// </summary>
+        internal IServiceProvider Services => app.Services;
 
         #endregion
 
@@ -179,14 +221,17 @@ public abstract class ServerHostTestBase
         /// <param name="root">An existing isolated data directory, or null to create one.</param>
         /// <param name="ownsRoot">Whether disposal removes the data directory.</param>
         /// <param name="logLevel">The optional diagnostic level for this fixture.</param>
+        /// <param name="configure">Optional services for deterministic fault injection.</param>
         /// <returns>The fixture owning the running application.</returns>
-        public static async Task<Fixture> StartAsync(string? token = null, string? root = null, bool ownsRoot = true, string? logLevel = null)
+        public static async Task<Fixture> StartAsync(string? token = null, string? root = null, bool ownsRoot = true, string? logLevel = null, Action<IServiceCollection>? configure = null)
         {
             root ??= CreateRoot();
             WebApplication? app = null;
             try
             {
-                app = await ServerHost.CreateAsync(CreateBuilder(root, token, logLevel));
+                var builder = CreateBuilder(root, token, logLevel);
+                configure?.Invoke(builder.Services);
+                app = await ServerHost.CreateAsync(builder);
                 await app.StartAsync();
                 return new Fixture(app, root, ownsRoot);
             }

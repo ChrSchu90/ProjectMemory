@@ -17,15 +17,17 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using ProjectMemory.Project;
+using ProjectMemory.MemoryFiles;
 using ProjectMemory.Routing;
 
 /// <summary>
 /// Exposes project and context administration operations as attributed MCP methods.
 /// </summary>
 /// <param name="projectManager">The project manager owning validated registry operations.</param>
+/// <param name="deletion">Coordinates durable project deletion.</param>
 /// <param name="logger">The logger used to record storage failure types without infrastructure details.</param>
 [McpServerToolType]
-internal sealed class AdministrationTools(ProjectManager projectManager, ILogger<AdministrationTools> logger)
+internal sealed class AdministrationTools(ProjectManager projectManager, ProjectDeletion deletion, ILogger<AdministrationTools> logger)
 {
     #region Static Fields
 
@@ -185,6 +187,17 @@ internal sealed class AdministrationTools(ProjectManager projectManager, ILogger
     }
 
     /// <summary>
+    /// Removes one explicit project and all of its bindings and files.
+    /// </summary>
+    /// <param name="project_id">The immutable project UUID.</param>
+    /// <param name="cancellationToken">Cancellation between recoverable steps.</param>
+    /// <returns>The deleted ID or a structured error.</returns>
+    [McpServerTool(Name = "delete_project", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false, UseStructuredContent = true, OutputSchemaType = typeof(AdministrationResponse<ProjectDeletedResult>))]
+    [Description("Permanently delete this active or archived project, including all files and context bindings, in one call.")]
+    public Task<CallToolResult> DeleteProjectAsync([Description("Immutable project UUID in hyphenated form.")] string project_id, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(() => deletion.DeleteAsync(project_id, cancellationToken));
+
+    /// <summary>
     /// Applies the administration contract's closed arguments and fixed version to generated schemas before serving requests.
     /// </summary>
     /// <param name="tools">The attributed tools registered in the current application's service provider.</param>
@@ -249,28 +262,53 @@ internal sealed class AdministrationTools(ProjectManager projectManager, ILogger
         };
     }
 
-    #endregion
-
-    #region Private Methods
-
-    private async Task<CallToolResult> ExecuteAsync<TData>(Func<Task<AdministrationResponse<TData>>> operation) where TData : class
+    /// <summary>
+    /// Encodes results and maps expected storage failures to safe MCP errors.
+    /// </summary>
+    /// <param name="operation">The typed tool operation.</param>
+    /// <param name="logger">The logger for safe storage diagnostics.</param>
+    /// <returns>A structured response and equivalent JSON text fallback.</returns>
+    internal static async Task<CallToolResult> ExecuteAsync<TData>(Func<Task<AdministrationResponse<TData>>> operation, ILogger logger) where TData : class
     {
         try
         {
             return Encode(await operation().ConfigureAwait(false));
         }
+        catch (MemoryFileException exception)
+        {
+            return Encode(AdministrationResponse<TData>.Failure(exception.Code));
+        }
         catch (Exception exception) when (exception is SqliteException or DbUpdateException or IOException or UnauthorizedAccessException)
         {
-            logger.LogError("Registry operation failed ({ErrorType}).", exception.GetType().Name);
+            logger.LogError("Storage operation failed ({ErrorType}).", exception.GetType().Name);
             return Encode(AdministrationResponse<TData>.Failure("STORAGE_UNAVAILABLE"));
         }
     }
+
+    #endregion
+
+    #region Private Methods
+
+    private Task<CallToolResult> ExecuteAsync<TData>(Func<Task<AdministrationResponse<TData>>> operation) where TData : class =>
+        ExecuteAsync(operation, logger);
 
     private static bool IsValidArgument(JsonElement property, JsonElement value)
     {
         var type = property.GetProperty("type");
         var integer = type.ValueKind == JsonValueKind.String && type.GetString() == "integer";
-        return integer ? value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _) : value.ValueKind == JsonValueKind.String;
+        if (integer)
+            return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _);
+        if (value.ValueKind != JsonValueKind.String)
+            return false;
+        try
+        {
+            // Reject malformed escaped UTF-16 before SDK parameter binding can expose a parser exception.
+            return value.GetString() is not null;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static CallToolResult Encode<TData>(AdministrationResponse<TData> response) where TData : class
@@ -351,3 +389,9 @@ internal sealed record ContextUnbindingResult(string ContextId, bool Changed);
 /// <param name="ProjectId">The immutable identifier of the resolved project.</param>
 /// <param name="ProjectName">The human-readable name of the resolved project.</param>
 internal sealed record ContextResolutionResult(string ContextId, Guid ProjectId, string ProjectName);
+
+/// <summary>
+/// Confirms complete removal of the selected project.
+/// </summary>
+/// <param name="ProjectId">The deleted immutable project ID.</param>
+internal sealed record ProjectDeletedResult(Guid ProjectId);

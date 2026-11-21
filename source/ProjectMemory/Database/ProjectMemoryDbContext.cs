@@ -75,6 +75,7 @@ public sealed class ProjectMemoryDbContext : DbContext
             table.HasCheckConstraint("CK_ContextBindings_Status", "\"Status\" IN ('Active', 'Inactive')");
         });
 
+        modelBuilder.Entity<ProjectRoutingEntity>().Property(project => project.DeletionPending).HasDefaultValue(false);
         modelBuilder.Entity<ProjectRoutingEntity>().ToTable(table => table.HasCheckConstraint("CK_ProjectRoutings_Status", "\"Status\" IN ('Active', 'Archived')"));
     }
 

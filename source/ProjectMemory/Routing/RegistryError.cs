@@ -18,5 +18,10 @@ public enum RegistryError
     /// <summary>
     /// A different or inactive binding already owns the context.
     /// </summary>
-    Conflict
+    Conflict,
+
+    /// <summary>
+    /// A durable deletion intent blocks changes to this project.
+    /// </summary>
+    ProjectBlocked
 }

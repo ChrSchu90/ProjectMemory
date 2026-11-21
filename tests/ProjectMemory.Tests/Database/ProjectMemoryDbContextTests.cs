@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using System;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Database;
 using ProjectMemory.Routing;
@@ -46,7 +48,7 @@ public sealed class ProjectMemoryDbContextTests
     }
 
     /// <summary>
-    /// Verifies that the single initial schema persists project identities, framework enum names and exact bindings.
+    /// Verifies that the migrated schema persists project identities, framework enum names and exact bindings.
     /// </summary>
     /// <returns>A task that completes when the initial schema, stored statuses and unchanged registry identities are verified.</returns>
     [TestMethod]
@@ -70,10 +72,59 @@ public sealed class ProjectMemoryDbContextTests
         CollectionAssert.AreEqual(new[] { "Active", "Archived" }, statuses);
 
         var applied = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.HasCount(1, applied);
+        Assert.HasCount(2, applied);
+        Assert.IsTrue(applied[1].EndsWith("_ProjectDeletionIntent", StringComparison.Ordinal));
         Assert.IsTrue(applied[0].EndsWith("_InitialCreate", StringComparison.Ordinal));
         var sql = await context.Database.SqlQueryRaw<string>("SELECT sql AS Value FROM sqlite_master WHERE name = 'ContextBindings'").SingleAsync();
         Assert.IsTrue(sql.Contains("BINARY", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Verifies that upgrading a populated M2 registry preserves exact bindings, IDs and lifecycle states.
+    /// </summary>
+    /// <returns>The asynchronous migration verification.</returns>
+    [TestMethod]
+    public async Task UpgradeM2RetainsProjectsAndBindings()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync(migrate: false);
+        var id = Guid.NewGuid();
+        await using (var legacy = fixture.CreateContext())
+        {
+            await legacy.GetService<IMigrator>().MigrateAsync("20261121154345_InitialCreate");
+            await legacy.Database.ExecuteSqlAsync($"INSERT INTO ProjectRoutings VALUES (1, {id}, 'older', 'Archived', 0, 0)");
+            await legacy.Database.ExecuteSqlRawAsync("""
+                INSERT INTO ContextBindings VALUES (1,1,'ChatProject','Portal','Active',0,0),(2,1,'ChatProject','portal','Active',0,0)
+                """);
+        }
+
+        SqliteConnection.ClearAllPools();
+        await fixture.Services.MigrateDatabaseAsync();
+        await using var current = fixture.CreateContext();
+        var row = await current.RoutingProjects.SingleAsync();
+        Assert.AreEqual(id, row.MemoryProjectId);
+        Assert.AreEqual(ProjectStatus.Archived, row.Status);
+        Assert.IsFalse(row.DeletionPending);
+        foreach (var context in new[] { "chat:Portal", "chat:portal" })
+        {
+            Assert.AreEqual(id, (await fixture.Registry.FindBindingAsync(DatabaseFixture.ParseContext(context)))!.MemoryProjectId);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that a downgrade cannot discard a committed deletion block.
+    /// </summary>
+    /// <returns>The asynchronous migration verification.</returns>
+    [TestMethod]
+    public async Task DowngradePreservesPendingIntent()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        await fixture.CreateProjectAsync("pending");
+        await using var db = fixture.CreateContext();
+        await db.Database.ExecuteSqlRawAsync("UPDATE ProjectRoutings SET DeletionPending=1, Status='Archived'");
+        var migrator = db.GetService<IMigrator>();
+        await Assert.ThrowsAsync<SqliteException>(() => migrator.MigrateAsync("20261121154345_InitialCreate"));
+        Assert.IsTrue((await db.RoutingProjects.SingleAsync()).DeletionPending);
+        Assert.HasCount(2, (await db.Database.GetAppliedMigrationsAsync()).ToArray());
     }
 
     /// <summary>

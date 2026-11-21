@@ -47,9 +47,16 @@ internal sealed record AdministrationResponse<TData>(string ContractVersion, boo
         "CONTEXT_UNBOUND" => "The exact context has no active binding.",
         "PROJECT_NOT_FOUND" => "The selected project does not exist.",
         "PROJECT_ARCHIVED" => "The selected project is archived.",
-        "ALREADY_EXISTS" => "A project with this exact name already exists.",
-        "CONFLICT" => "The context already has a different or inactive binding. Unbind explicitly before rebinding.",
-        "STORAGE_UNAVAILABLE" => "Registry storage is unavailable.",
+        "ALREADY_EXISTS" => "The selected name already exists.",
+        "CONFLICT" => "The operation conflicts with the current state.",
+        "STORAGE_UNAVAILABLE" => "Storage is unavailable.",
+        "PROJECT_BLOCKED" => "Project deletion is pending.",
+        "RECOVERY_REQUIRED" => "The project remains blocked. Inspect its deletion state and retry.",
+        "INVALID_PATH" => "Supply an exact, valid relative Markdown path.",
+        "UNSAFE_PATH" => "The storage entry cannot be accessed safely.",
+        "MEMORY_NOT_FOUND" => "The selected memory does not exist.",
+        "CONTENT_TOO_LARGE" => "Memory content exceeds the byte limit.",
+        "INVALID_ENCODING" => "Memory content must be valid UTF-8 text.",
         _ => "The operation could not be completed."
     }));
 

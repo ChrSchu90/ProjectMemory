@@ -72,6 +72,11 @@ namespace ProjectMemory.Database.Migrations
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("DeletionPending")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid>("MemoryProjectId")
                         .HasColumnType("TEXT");
 

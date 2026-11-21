@@ -52,6 +52,11 @@ internal sealed class ProjectRoutingEntity
     public ProjectStatus Status { get; set; } = ProjectStatus.Active;
 
     /// <summary>
+    /// Gets or sets the durable intent to purge this archived project.
+    /// </summary>
+    public bool DeletionPending { get; set; }
+
+    /// <summary>
     /// Gets or sets when the project routing was created.
     /// </summary>
     [Required]
