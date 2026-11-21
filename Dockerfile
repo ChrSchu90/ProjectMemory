@@ -2,7 +2,7 @@
 # Build
 # ------------------------------------------------------------
 
-FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:11.0-alpine3.24@sha256:52556c0fb9d0f609ae9aeab9efeeba96f4acc2f7038f7696f2235ccbdbb8e290 AS build
+FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:10.0-alpine3.24@sha256:0294f285d062afacc8b5f6d7febb0cd4ee879320e5585fa15f2f4ebf1feb9ba7 AS build
 
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -46,7 +46,6 @@ WORKDIR /app
 COPY --from=build /app/publish/ ./
 
 ENV \
-    ASPNETCORE_HTTP_PORTS=8000 \
     DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true \
     ProjectMemory__DataDirectory=/data

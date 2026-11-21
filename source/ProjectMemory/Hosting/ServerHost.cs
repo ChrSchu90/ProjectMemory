@@ -58,10 +58,15 @@ internal static class ServerHost
     /// <returns>The initialized application ready to start its listener.</returns>
     public static async Task<WebApplication> CreateAsync(WebApplicationBuilder builder)
     {
-        // Use private HTTP unless the operator explicitly configures a listener.
-        if (string.IsNullOrEmpty(builder.Configuration["urls"]) && !builder.Configuration.GetSection("Kestrel:Endpoints").Exists())
+        // Container interfaces are reached through an operator-controlled private port publication.
+        if (string.IsNullOrEmpty(builder.Configuration[WebHostDefaults.ServerUrlsKey])
+            && string.IsNullOrEmpty(builder.Configuration[WebHostDefaults.HttpPortsKey])
+            && string.IsNullOrEmpty(builder.Configuration[WebHostDefaults.HttpsPortsKey])
+            && !builder.Configuration.GetSection("Kestrel:Endpoints").Exists())
         {
-            builder.WebHost.UseUrls("http://127.0.0.1:8000");
+            var container = builder.Configuration["DOTNET_RUNNING_IN_CONTAINER"];
+            var address = string.Equals(container, "true", StringComparison.OrdinalIgnoreCase) || container == "1" ? "0.0.0.0" : "127.0.0.1";
+            builder.WebHost.UseUrls($"http://{address}:8000");
         }
 
         // Register the configuration section and validate it before accepting requests.
@@ -85,7 +90,9 @@ internal static class ServerHost
 
                 // Diagnostic logs from ASP.NET Core and EF Core are too verbose for normal operation.
                 .MinimumLevel.Override("Microsoft", logLevelSwitch.MinimumLevel > LogEventLevel.Debug ? LogEventLevel.Warning : logLevelSwitch.MinimumLevel)
-                .MinimumLevel.Override("Microsoft.EntityFrameworkCore", logLevelSwitch.MinimumLevel > LogEventLevel.Debug ? LogEventLevel.Fatal : logLevelSwitch.MinimumLevel);
+                // EF diagnostics and lifetime startup messages can disclose connection/storage paths.
+                .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Fatal)
+                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Warning);
         });
 
         // Register the existing SQLite persistence and routing services.

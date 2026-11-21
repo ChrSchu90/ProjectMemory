@@ -23,6 +23,10 @@ updates:
       day: "friday"
       time: "12:17"
       timezone: "Europe/Berlin"
+    ignore:
+      - dependency-name: "dotnet/sdk" # Only .NET minor/patch and digest updates
+        update-types:
+          - "version-update:semver-major"
     groups:
       docker-images:
         patterns:

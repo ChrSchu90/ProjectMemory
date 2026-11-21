@@ -18,7 +18,7 @@ var logLevelSwitch = new LoggingLevelSwitch { MinimumLevel = LogEventLevel.Infor
 Log.Logger = new LoggerConfiguration().MinimumLevel.ControlledBy(logLevelSwitch)
     .WriteTo.Console(outputTemplate: "[{Timestamp:dd.MM.yyyy HH:mm:ss.fff} {Level:u3}] {Message:lj}{NewLine}{Exception}", theme: AnsiConsoleTheme.Sixteen, applyThemeToRedirectedOutput: true)
     .CreateLogger();
-Log.Information("Starting Proxy Memory v{Version}", ServerHost.Version);
+Log.Information("Starting ProjectMemory v{Version}", ServerHost.Version);
 
 try
 {

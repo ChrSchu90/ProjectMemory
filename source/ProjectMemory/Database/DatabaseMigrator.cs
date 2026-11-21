@@ -78,7 +78,7 @@ internal sealed class DatabaseMigrator
             CreateMigrationCopy();
             await ApplyAndValidateMigrationsAsync(_paths.MigrationPath, cancellationToken).ConfigureAwait(false);
             ActivateMigratedDatabase();
-            _logger.LogInformation("Lifecycle database migration completed. Previous database retained as {BackupPath}.", _paths.BackupPath);
+            _logger.LogInformation("Lifecycle database migration completed. Previous database retained.");
         }
         catch
         {
@@ -189,7 +189,7 @@ internal sealed class DatabaseMigrator
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "Failed to remove temporary migration database artifacts at {MigrationPath}.", _paths.MigrationPath);
+            _logger.LogWarning("Failed to remove temporary migration database artifacts ({ErrorType}).", exception.GetType().Name);
         }
     }
 

@@ -70,7 +70,7 @@ jobs:
       run: dotnet tool run dotnet-ef migrations has-pending-model-changes --project ${{ env.NET_DB_PROJECT }} --startup-project ${{ env.NET_DB_PROJECT }} --configuration Release --no-build
 
     - name: .NET Test
-      run: dotnet test ${{ env.NET_SOLUTION }} --verbosity normal --no-restore --no-build --configuration Release
+      run: dotnet test --solution ${{ env.NET_SOLUTION }} --verbosity normal --no-restore --no-build --configuration Release
     
     - name: .NET Publish
       shell: bash
