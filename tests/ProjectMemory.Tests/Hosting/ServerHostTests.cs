@@ -9,17 +9,12 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using ProjectMemory.Configuration;
 using ProjectMemory.Hosting;
 using Serilog.Core;
 using Serilog.Events;
@@ -28,7 +23,7 @@ using Serilog.Events;
 /// Exercises real Kestrel HTTP boundaries using disposable local storage.
 /// </summary>
 [TestClass]
-public sealed class ServiceFoundationTests
+public sealed class ServerHostTests : ServerHostTestBase
 {
     #region Static Fields
 
@@ -52,6 +47,7 @@ public sealed class ServiceFoundationTests
     /// Verifies that MCP initializes and lists no unimplemented tools with optional auth enabled or disabled.
     /// </summary>
     /// <param name="token">The optional bearer token used by the server and client.</param>
+    /// <returns>A task that completes when the test has verified that MCP initializes and lists no unimplemented tools with optional auth enabled or disabled.</returns>
     [TestMethod]
     [DataRow(null)]
     [DataRow("")]
@@ -71,7 +67,7 @@ public sealed class ServiceFoundationTests
         Assert.AreEqual(HttpStatusCode.Accepted, notification.StatusCode);
         using var list = await SendAsync(client, """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""");
         Assert.AreEqual(HttpStatusCode.OK, list.StatusCode);
-        Assert.AreEqual(0, (await ReadResultAsync(list)).GetProperty("tools").GetArrayLength());
+        AssertToolDiscovery((await ReadResultAsync(list)).GetProperty("tools"));
         using var call = await SendAsync(client, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"delete_project","arguments":{"project_id":"test"}}}""");
         var error = await ReadMessageAsync(call);
         Assert.AreEqual(3, error.GetProperty("id").GetInt32());
@@ -84,6 +80,7 @@ public sealed class ServiceFoundationTests
     /// Verifies that the newer stateless protocol discovers capabilities and lists tools without an initialize handshake.
     /// </summary>
     /// <param name="token">The optional bearer token used by the server and client.</param>
+    /// <returns>A task that completes when the test has verified that the newer stateless protocol discovers capabilities and lists tools without an initialize handshake.</returns>
     [TestMethod]
     [DataRow(null)]
     [DataRow("")]
@@ -102,12 +99,13 @@ public sealed class ServiceFoundationTests
         using var list = await SendAsync(client, """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""", "2026-07-28");
         Assert.AreEqual(HttpStatusCode.OK, list.StatusCode);
         Assert.IsFalse(list.Headers.Contains("Mcp-Session-Id"));
-        Assert.AreEqual(0, (await ReadResultAsync(list)).GetProperty("tools").GetArrayLength());
+        AssertToolDiscovery((await ReadResultAsync(list)).GetProperty("tools"));
     }
 
     /// <summary>
     /// Verifies that the newer transport refuses a method header that contradicts its request body.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that the newer transport refuses a method header that contradicts its request body.</returns>
     [TestMethod]
     public async Task StatelessTransportRejectsMismatchedMethodHeader()
     {
@@ -117,6 +115,7 @@ public sealed class ServiceFoundationTests
         {
             Content = new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"contract-test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}""", Encoding.UTF8, "application/json")
         };
+
         request.Headers.Accept.ParseAdd("application/json, text/event-stream");
         request.Headers.Add("MCP-Protocol-Version", "2026-07-28");
         request.Headers.Add("Mcp-Method", "server/discover");
@@ -127,6 +126,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that all MCP transport methods reject missing, invalid or malformed tokens before dispatch.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that all MCP transport methods reject missing, invalid or malformed tokens before dispatch.</returns>
     [TestMethod]
     public async Task ConfiguredTokenRejectsUnauthorizedRequests()
     {
@@ -141,12 +141,14 @@ public sealed class ServiceFoundationTests
                 {
                     request.Headers.TryAddWithoutValidation("Authorization", header);
                 }
+
                 using var response = await client.SendAsync(request);
                 Assert.AreEqual(HttpStatusCode.Unauthorized, response.StatusCode);
                 Assert.AreEqual("Bearer", response.Headers.WwwAuthenticate.Single().Scheme);
                 Assert.AreEqual("", await response.Content.ReadAsStringAsync());
             }
         }
+
         using var health = await client.GetAsync("/health/ready");
         Assert.AreEqual(HttpStatusCode.OK, health.StatusCode);
     }
@@ -154,6 +156,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that readiness reflects storage loss and recovery independently of liveness.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that readiness reflects storage loss and recovery independently of liveness.</returns>
     [TestMethod]
     public async Task ReadinessTracksStorageAvailability()
     {
@@ -176,6 +179,7 @@ public sealed class ServiceFoundationTests
         {
             Directory.Move(moved, fixture.Root);
         }
+
         using var restored = await client.GetAsync("/health/ready");
         Assert.AreEqual(HttpStatusCode.OK, restored.StatusCode);
     }
@@ -185,6 +189,7 @@ public sealed class ServiceFoundationTests
     /// </summary>
     /// <param name="key">The configuration key to override.</param>
     /// <param name="value">The invalid configuration value.</param>
+    /// <returns>A task that completes when the test has verified that invalid storage, log-level and token settings fail before a listener opens.</returns>
     [TestMethod]
     [DataRow("ProjectMemory:DataDirectory", "")]
     [DataRow("ProjectMemory:DataDirectory", "relative-path")]
@@ -197,6 +202,7 @@ public sealed class ServiceFoundationTests
         {
             var builder = Fixture.CreateBuilder(root);
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { [key] = value });
+
             await Assert.ThrowsAsync<OptionsValidationException>(() => ServerHost.CreateAsync(builder));
         }
         finally
@@ -208,6 +214,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that restarting the host preserves the registry and existing files.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that restarting the host preserves the registry and existing files.</returns>
     [TestMethod]
     public async Task RestartPreservesData()
     {
@@ -218,6 +225,7 @@ public sealed class ServiceFoundationTests
             {
                 await File.WriteAllTextAsync(Path.Combine(root, "sentinel.md"), "persistent data");
             }
+
             var original = await File.ReadAllBytesAsync(Path.Combine(root, "ProjectMemory.db"));
             await using (var second = await Fixture.StartAsync(root: root, ownsRoot: false))
             {
@@ -239,6 +247,7 @@ public sealed class ServiceFoundationTests
     /// <param name="key">An optional explicit listener setting.</param>
     /// <param name="value">The explicit listener value.</param>
     /// <param name="expectedUrls">The expected URLs after host composition.</param>
+    /// <returns>A task that completes when the test has verified that port 8000 defaults to local loopback or container interfaces unless a listener is explicitly configured.</returns>
     [TestMethod]
     [DataRow(null, null, null, "http://127.0.0.1:8000")]
     [DataRow("false", null, null, "http://127.0.0.1:8000")]
@@ -261,6 +270,7 @@ public sealed class ServiceFoundationTests
             {
                 builder.Configuration[key] = value;
             }
+
             await using var app = await ServerHost.CreateAsync(builder);
             Assert.AreEqual(expectedUrls, builder.Configuration["urls"]);
             if (key is not null)
@@ -278,6 +288,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that the host retains the startup log-level switch and applies the configured level.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that the host retains the startup log-level switch and applies the configured level.</returns>
     [TestMethod]
     public async Task HostRetainsStartupLogLevelSwitch()
     {
@@ -287,6 +298,7 @@ public sealed class ServiceFoundationTests
             var builder = Fixture.CreateBuilder(root);
             builder.Configuration["ProjectMemory:LogLevel"] = "Debug";
             var logLevelSwitch = new LoggingLevelSwitch { MinimumLevel = LogEventLevel.Information };
+
             builder.Services.AddSingleton(logLevelSwitch);
 
             await using var app = await ServerHost.CreateAsync(builder);
@@ -303,6 +315,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that nonexistent roots and files used as roots fail without creating storage.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that nonexistent roots and files used as roots fail without creating storage.</returns>
     [TestMethod]
     public async Task MissingOrFileDataRootFailsStartup()
     {
@@ -326,6 +339,7 @@ public sealed class ServiceFoundationTests
     /// <summary>
     /// Verifies that startup, requests and storage failures at Debug level disclose neither the configured token nor host paths.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that startup, requests and storage failures at Debug level disclose neither the configured token nor host paths.</returns>
     [TestMethod]
     [DoNotParallelize]
     public async Task DiagnosticLogsAndResponsesExcludeSecretsAndHostPaths()
@@ -366,6 +380,7 @@ public sealed class ServiceFoundationTests
         {
             Console.SetOut(output);
         }
+
         var logs = captured.ToString();
         Assert.IsTrue(logs.Contains("Creating lifecycle database.", StringComparison.Ordinal));
         Assert.IsFalse(logs.Contains(token, StringComparison.Ordinal), "Logs disclosed the configured token.");
@@ -377,171 +392,40 @@ public sealed class ServiceFoundationTests
 
     #region Private Methods
 
-    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string body, string protocolVersion = "2025-11-25")
+    private static void AssertToolDiscovery(JsonElement tools)
     {
-        if (protocolVersion == "2026-07-28")
-        {
-            var message = JsonNode.Parse(body)!;
-            message["params"]!["_meta"] = JsonNode.Parse("""{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"contract-test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}""");
-            body = message.ToJsonString();
-        }
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent(body, Encoding.UTF8, "application/json") };
-        request.Headers.Accept.ParseAdd("application/json, text/event-stream");
-        request.Headers.Add("MCP-Protocol-Version", protocolVersion);
-        using var json = JsonDocument.Parse(body);
-        request.Headers.Add("Mcp-Method", json.RootElement.GetProperty("method").GetString());
-        return await client.SendAsync(request);
-    }
+        CollectionAssert.AreEquivalent(new[] { "list_projects", "create_project", "archive_project", "reactivate_project", "resolve_context", "list_context_bindings", "bind_context", "unbind_context" }, tools.EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToArray());
 
-    private static async Task<JsonElement> ReadResultAsync(HttpResponseMessage response)
-    {
-        return (await ReadMessageAsync(response)).GetProperty("result");
-    }
-
-    private static async Task<JsonElement> ReadMessageAsync(HttpResponseMessage response)
-    {
-        var body = await response.Content.ReadAsStringAsync();
-        if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+        foreach (var tool in tools.EnumerateArray())
         {
-            body = body.Split('\n').First(l => l.StartsWith("data: ", StringComparison.Ordinal))[6..];
+            Assert.IsTrue(tool.TryGetProperty("outputSchema", out _));
+            Assert.AreEqual(tool.GetProperty("name").GetString() == "unbind_context", tool.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
+            var output = tool.GetProperty("outputSchema");
+            CollectionAssert.AreEquivalent(new[] { "contract_version", "ok", "data", "error" }, output.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray());
+            CollectionAssert.AreEquivalent(new[] { "contract_version", "ok", "data", "error" }, output.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
+            var expectedDataFields = tool.GetProperty("name").GetString() switch
+            {
+                "list_projects" => new[] { "projects", "offset", "limit", "has_more" },
+                "create_project" => new[] { "project" },
+                "archive_project" or "reactivate_project" => new[] { "project", "changed" },
+                "resolve_context" => new[] { "context_id", "project_id", "project_name" },
+                "list_context_bindings" => new[] { "bindings", "offset", "limit", "has_more" },
+                "bind_context" => new[] { "context_id", "project_id", "changed" },
+                _ => new[] { "context_id", "changed" }
+            };
+
+            var data = output.GetProperty("properties").GetProperty("data");
+            CollectionAssert.AreEquivalent(expectedDataFields, data.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray());
+            var input = tool.GetProperty("inputSchema");
+            Assert.IsFalse(input.GetProperty("additionalProperties").GetBoolean());
+            Assert.IsFalse(input.GetProperty("properties").TryGetProperty("cancellationToken", out _));
+            Assert.IsFalse(input.GetProperty("properties").TryGetProperty("projectManager", out _));
         }
-        using var json = JsonDocument.Parse(body);
-        return json.RootElement.Clone();
     }
 
     #endregion
 
     #region Test Classes
-
-    /// <summary>
-    /// Owns a local application and optionally its disposable data root.
-    /// </summary>
-    /// <param name="app">The application owned by the fixture.</param>
-    /// <param name="root">The isolated data directory.</param>
-    /// <param name="ownsRoot">Whether disposal removes the data directory.</param>
-    private sealed class Fixture(WebApplication app, string root, bool ownsRoot) : IAsyncDisposable
-    {
-        #region Static Fields
-
-        #endregion
-
-        #region Private Fields
-
-        #endregion
-
-        #region Constructors
-
-        #endregion
-
-        #region Properties
-
-        /// <summary>
-        /// Gets the isolated data directory used by this fixture.
-        /// </summary>
-        public string Root => root;
-
-        #endregion
-
-        #region Public Methods
-
-        /// <summary>
-        /// Creates an isolated temporary data directory owned by the caller.
-        /// </summary>
-        /// <returns>The absolute path of the new directory.</returns>
-        public static string CreateRoot()
-        {
-            var root = Path.Combine(Path.GetTempPath(), "ProjectMemory.Tests", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(root);
-            return root;
-        }
-
-        /// <summary>
-        /// Creates an application builder with isolated configuration and a loopback listener.
-        /// </summary>
-        /// <param name="root">The isolated data directory.</param>
-        /// <param name="token">The optional server bearer token.</param>
-        /// <param name="logLevel">The optional diagnostic level for this fixture.</param>
-        /// <returns>The configured application builder.</returns>
-        public static WebApplicationBuilder CreateBuilder(string root, string? token = null, string? logLevel = null)
-        {
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production", Args = [] });
-            builder.Configuration.Sources.Clear();
-            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["urls"] = "http://127.0.0.1:0",
-                ["ProjectMemory:DataDirectory"] = root,
-                ["ProjectMemory:BearerToken"] = token,
-                ["ProjectMemory:LogLevel"] = logLevel ?? ProjectMemoryOptions.DefaultLogLevel
-            });
-            return builder;
-        }
-
-        /// <summary>
-        /// Starts an application with isolated storage and configuration.
-        /// </summary>
-        /// <param name="token">The optional server bearer token.</param>
-        /// <param name="root">An existing isolated data directory, or null to create one.</param>
-        /// <param name="ownsRoot">Whether disposal removes the data directory.</param>
-        /// <param name="logLevel">The optional diagnostic level for this fixture.</param>
-        /// <returns>The fixture owning the running application.</returns>
-        public static async Task<Fixture> StartAsync(string? token = null, string? root = null, bool ownsRoot = true, string? logLevel = null)
-        {
-            root ??= CreateRoot();
-            WebApplication? app = null;
-            try
-            {
-                app = await ServerHost.CreateAsync(CreateBuilder(root, token, logLevel));
-                await app.StartAsync();
-                return new Fixture(app, root, ownsRoot);
-            }
-            catch
-            {
-                if (app is not null)
-                {
-                    await app.DisposeAsync();
-                }
-                if (ownsRoot)
-                {
-                    Directory.Delete(root, true);
-                }
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// Creates an HTTP client owned by the caller for this fixture's listener.
-        /// </summary>
-        /// <param name="token">The optional bearer token sent by the client.</param>
-        /// <returns>The client targeting the local listener.</returns>
-        public HttpClient CreateClient(string? token = null)
-        {
-            var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-            var client = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(15) };
-            if (!string.IsNullOrEmpty(token))
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            }
-            return client;
-        }
-
-        /// <inheritdoc />
-        public async ValueTask DisposeAsync()
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-            SqliteConnection.ClearAllPools();
-            if (ownsRoot)
-            {
-                Directory.Delete(root, true);
-            }
-        }
-
-        #endregion
-
-        #region Private Methods
-
-        #endregion
-    }
 
     #endregion
 }

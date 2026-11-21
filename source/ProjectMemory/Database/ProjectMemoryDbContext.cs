@@ -61,6 +61,21 @@ public sealed class ProjectMemoryDbContext : DbContext
         // Store enums as strings in the database for better readability and maintainability.
         configurationBuilder.Properties<BindingType>().HaveConversion<EnumToStringConverter<BindingType>>();
         configurationBuilder.Properties<Status>().HaveConversion<EnumToStringConverter<Status>>();
+        configurationBuilder.Properties<ProjectStatus>().HaveConversion<EnumToStringConverter<ProjectStatus>>();
+    }
+
+    /// <inheritdoc />
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ContextBindingEntity>().Property(binding => binding.BindingName).UseCollation("BINARY");
+        modelBuilder.Entity<ContextBindingEntity>().ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_ContextBindings_Name", "length(\"BindingName\") BETWEEN 1 AND 255 AND \"BindingName\" NOT GLOB '*[^!-~]*' AND instr(\"BindingName\", char(0)) = 0");
+            table.HasCheckConstraint("CK_ContextBindings_Type", "\"BindingType\" IN ('ChatProject', 'GitRepository', 'LocalRepository')");
+            table.HasCheckConstraint("CK_ContextBindings_Status", "\"Status\" IN ('Active', 'Inactive')");
+        });
+
+        modelBuilder.Entity<ProjectRoutingEntity>().ToTable(table => table.HasCheckConstraint("CK_ProjectRoutings_Status", "\"Status\" IN ('Active', 'Archived')"));
     }
 
     #endregion
@@ -77,6 +92,22 @@ public sealed class ProjectMemoryDbContext : DbContext
     [SuppressMessage("ReSharper", "UnusedType.Local")]
     private sealed class ProjectMemoryDbContextFactory : IDesignTimeDbContextFactory<ProjectMemoryDbContext>
     {
+        #region Static Fields
+
+        #endregion
+
+        #region Private Fields
+
+        #endregion
+
+        #region Constructors
+
+        #endregion
+
+        #region Properties
+
+        #endregion
+
         #region Public Methods
 
         /// <inheritdoc />
@@ -89,6 +120,10 @@ public sealed class ProjectMemoryDbContext : DbContext
             var options = ContextOptions.Create(databasePaths.DatabasePath, pooling: false);
             return new ProjectMemoryDbContext(options);
         }
+
+        #endregion
+
+        #region Private Methods
 
         #endregion
     }

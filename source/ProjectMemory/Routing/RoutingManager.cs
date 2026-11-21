@@ -69,7 +69,7 @@ public sealed class RoutingManager
         if (route == null)
             return new ContextResolution(ContextResolutionStatus.NotBound, null, null);
 
-        if (route.ProjectRoutingStatus != Status.Active)
+        if (route.ProjectRoutingStatus != ProjectStatus.Active)
             return new ContextResolution(ContextResolutionStatus.ProjectRoutingInactive, null, null);
 
         if (route.BindingStatus != Status.Active)

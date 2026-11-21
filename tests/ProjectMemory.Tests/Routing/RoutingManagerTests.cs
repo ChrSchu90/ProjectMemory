@@ -14,13 +14,17 @@ using ProjectMemory.Routing;
 [TestClass]
 public sealed class RoutingManagerTests
 {
-    #region Private Fields
+    #region Static Fields
 
     private static readonly ContextId TestContextId = CreateContextId("git:github.com/ChrSchu90/ProjectMemory");
 
     #endregion
 
-    #region Tests Constructors
+    #region Private Fields
+
+    #endregion
+
+    #region Test Constructors
 
     #endregion
 
@@ -33,6 +37,7 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that a context without a persisted binding is reported as not bound and does not expose a memory project identifier.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that a context without a persisted binding is reported as not bound and does not expose a memory project identifier.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncReturnsNotBoundWhenRouteDoesNotExist()
     {
@@ -46,15 +51,16 @@ public sealed class RoutingManagerTests
     }
 
     /// <summary>
-    /// Verifies that an inactive project routing fails closed even when the context binding itself is active.
+    /// Verifies that an archived project fails closed even when its context binding is active.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an archived project fails closed even when its context binding is active.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncReturnsProjectRoutingInactive()
     {
         var route = new ProjectRoute(
             Guid.NewGuid(),
             Guid.NewGuid().ToString("N"),
-            Status.Inactive,
+            ProjectStatus.Archived,
             Status.Active);
 
         var registry = new StubProjectRegistry(route);
@@ -69,13 +75,14 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that an inactive context binding fails closed even when the target project routing is active.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an inactive context binding fails closed even when the target project routing is active.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncReturnsBindingInactive()
     {
         var route = new ProjectRoute(
             Guid.NewGuid(),
             Guid.NewGuid().ToString("N"),
-            Status.Active,
+            ProjectStatus.Active,
             Status.Inactive);
 
         var registry = new StubProjectRegistry(route);
@@ -91,6 +98,7 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that an active project routing with an active context binding resolves to the exact persisted memory project identifier.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an active project routing with an active context binding resolves to the exact persisted memory project identifier.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncReturnsResolvedRoute()
     {
@@ -99,7 +107,7 @@ public sealed class RoutingManagerTests
         var route = new ProjectRoute(
             memoryProjectId,
             memoryProjectName,
-            Status.Active,
+            ProjectStatus.Active,
             Status.Active);
 
         var registry = new StubProjectRegistry(route);
@@ -115,6 +123,7 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that cancellation requested while resolving a context is propagated to the caller.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that cancellation requested while resolving a context is propagated to the caller.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncPropagatesCancellation()
     {
@@ -135,13 +144,14 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that an unsupported project routing status fails closed instead of being treated as routable.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an unsupported project routing status fails closed instead of being treated as routable.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncRejectsUnknownProjectRoutingStatus()
     {
         var route = new ProjectRoute(
             Guid.NewGuid(),
             Guid.NewGuid().ToString("N"),
-            (Status)int.MaxValue,
+            (ProjectStatus)int.MaxValue,
             Status.Active);
 
         var registry = new StubProjectRegistry(route);
@@ -156,13 +166,14 @@ public sealed class RoutingManagerTests
     /// <summary>
     /// Verifies that an unsupported binding status fails closed instead of being treated as routable.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an unsupported binding status fails closed instead of being treated as routable.</returns>
     [TestMethod]
     public async Task ResolveContextAsyncRejectsUnknownBindingStatus()
     {
         var route = new ProjectRoute(
             Guid.NewGuid(),
             Guid.NewGuid().ToString("N"),
-            Status.Active,
+            ProjectStatus.Active,
             (Status)int.MaxValue);
 
         var registry = new StubProjectRegistry(route);
@@ -193,13 +204,16 @@ public sealed class RoutingManagerTests
         return contextId;
     }
 
-
     #endregion
 
     #region Test Classes
 
     private sealed class StubProjectRegistry : IProjectRegistry
     {
+        #region Static Fields
+
+        #endregion
+
         #region Private Fields
 
         private readonly Func<ContextId, CancellationToken, Task<ProjectRoute?>> _findRoute;
@@ -208,11 +222,19 @@ public sealed class RoutingManagerTests
 
         #region Constructors
 
+        /// <summary>
+        /// Initializes a registry stub that returns a fixed route for every lookup.
+        /// </summary>
+        /// <param name="route">The route snapshot to return, or <see langword="null"/> to simulate an unbound context.</param>
         public StubProjectRegistry(ProjectRoute? route)
             : this((_, _) => Task.FromResult(route))
         {
         }
 
+        /// <summary>
+        /// Initializes a registry stub with a caller-supplied route lookup.
+        /// </summary>
+        /// <param name="findRoute">The delegate that determines the route or failure observed by the routing manager.</param>
         public StubProjectRegistry(Func<ContextId, CancellationToken, Task<ProjectRoute?>> findRoute)
         {
             _findRoute = findRoute ?? throw new ArgumentNullException(nameof(findRoute));
@@ -220,69 +242,101 @@ public sealed class RoutingManagerTests
 
         #endregion
 
+        #region Properties
+
+        #endregion
+
         #region Public Methods
 
+        /// <inheritdoc />
         public Task<ProjectRoute?> FindRouteAsync(ContextId contextId, CancellationToken cancellationToken = default)
         {
             return _findRoute(contextId, cancellationToken);
         }
 
+        /// <inheritdoc />
         public Task<ProjectRouting?> FindByMemoryProjectIdAsync(Guid memoryProjectId, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<ProjectRouting?> FindByMemoryProjectNameAsync(string memoryProjectName, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
-        public Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, Status status, CancellationToken cancellationToken = default)
+        /// <inheritdoc />
+        public Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, ProjectStatus status, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<ContextBinding?> FindBindingAsync(ContextId contextId, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<ContextBinding> CreateBindingAsync(ContextId contextId, Guid memoryProjectId, Status status, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
-        public Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default)
+        /// <inheritdoc />
+        public Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, ProjectStatus expectedStatus, ProjectStatus newStatus, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<bool> TryUpdateBindingStatusAsync(ContextId contextId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<bool> TryRemoveBindingAsync(ContextId contextId, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<bool> TryRemoveProjectAsync(Guid memoryProjectId, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public Task<IReadOnlyList<ProjectRouting>> ListProjectsAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult<IReadOnlyList<ProjectRouting>>(Array.Empty<ProjectRouting>());
         }
 
+        /// <inheritdoc />
         public Task<IReadOnlyList<ContextBinding>> ListBindingsAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult<IReadOnlyList<ContextBinding>>(Array.Empty<ContextBinding>());
         }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<ProjectRouting>> ListProjectsPageAsync(int offset, int limit, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<ContextBinding>> ListBindingsPageAsync(Guid? projectId, int offset, int limit, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        /// <inheritdoc />
+        public Task<RegistryChange<ContextBinding>> BindAsync(ContextId contextId, Guid projectId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        /// <inheritdoc />
+        public Task<RegistryChange<ProjectRouting>> SetProjectStatusAsync(Guid projectId, ProjectStatus status, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        #endregion
+
+        #region Private Methods
 
         #endregion
     }

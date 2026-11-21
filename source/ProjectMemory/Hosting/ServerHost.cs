@@ -4,27 +4,31 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database;
 using ProjectMemory.Operations;
-using Serilog;
+using ProjectMemory.Project;
+using ProjectMemory.Tools;
 using Serilog.Core;
 using Serilog.Events;
 using Serilog.Sinks.SystemConsole.Themes;
-using System;
+using Serilog;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using System;
 
 /// <summary>
-/// Composes the single service without publishing later milestone tools.
+/// Composes the single service and its implemented administration tools.
 /// </summary>
 internal static class ServerHost
 {
@@ -97,15 +101,17 @@ internal static class ServerHost
 
         // Register the existing SQLite persistence and routing services.
         builder.Services.AddPersistence();
+        builder.Services.AddSingleton<ProjectManager>();
 
-        // Register the HTTP MCP transport and truthful M1 tool discovery.
+        // Register the HTTP MCP transport and the project and context administration tools.
         builder.Services.AddMcpServer(options => options.ServerInfo = new Implementation { Name = "ProjectMemory", Version = Version })
             .WithHttpTransport(options =>
             {
                 // Stateless mode does not require server-to-client sampling or elicitation.
                 options.SessionMode = HttpServerSessionMode.Stateless;
             })
-            .WithListToolsHandler((_, _) => new ValueTask<ListToolsResult>(new ListToolsResult { Tools = [] }));
+            .WithTools<AdministrationTools>(AdministrationTools.SerializerOptions)
+            .WithRequestFilters(filters => filters.AddCallToolFilter(AdministrationTools.ValidateArguments));
 
         // Register the storage readiness check; liveness will exclude storage checks.
         builder.Services.AddSingleton<DataRootHealthCheck>();
@@ -128,6 +134,8 @@ internal static class ServerHost
             app.UseMiddleware<OptionalBearerMiddleware>();
             app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
             app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+
+            AdministrationTools.ConfigureSchemas(app.Services.GetServices<McpServerTool>());
             app.MapMcp("/mcp");
             return app;
         }

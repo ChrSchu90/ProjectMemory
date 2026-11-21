@@ -26,7 +26,8 @@ namespace ProjectMemory.Database.Migrations
                     b.Property<string>("BindingName")
                         .IsRequired()
                         .HasMaxLength(255)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .UseCollation("BINARY");
 
                     b.Property<string>("BindingType")
                         .IsRequired()
@@ -52,7 +53,14 @@ namespace ProjectMemory.Database.Migrations
                     b.HasIndex("BindingType", "BindingName")
                         .IsUnique();
 
-                    b.ToTable("ContextBindings");
+                    b.ToTable("ContextBindings", t =>
+                        {
+                            t.HasCheckConstraint("CK_ContextBindings_Name", "length(\"BindingName\") BETWEEN 1 AND 255 AND \"BindingName\" NOT GLOB '*[^!-~]*' AND instr(\"BindingName\", char(0)) = 0");
+
+                            t.HasCheckConstraint("CK_ContextBindings_Status", "\"Status\" IN ('Active', 'Inactive')");
+
+                            t.HasCheckConstraint("CK_ContextBindings_Type", "\"BindingType\" IN ('ChatProject', 'GitRepository', 'LocalRepository')");
+                        });
                 });
 
             modelBuilder.Entity("ProjectMemory.Database.Entities.ProjectRoutingEntity", b =>
@@ -89,7 +97,10 @@ namespace ProjectMemory.Database.Migrations
 
                     b.HasIndex("UpdatedAt");
 
-                    b.ToTable("ProjectRoutings");
+                    b.ToTable("ProjectRoutings", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProjectRoutings_Status", "\"Status\" IN ('Active', 'Archived')");
+                        });
                 });
 
             modelBuilder.Entity("ProjectMemory.Database.Entities.ContextBindingEntity", b =>

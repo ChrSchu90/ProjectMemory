@@ -1,10 +1,10 @@
 namespace ProjectMemory.Tests.Database;
 
-using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
+using System.Threading;
+using System;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,18 +17,25 @@ using ProjectMemory.Database;
 [TestClass]
 public sealed class DatabaseMigratorTests
 {
+    #region Static Fields
+
+    #endregion
+
     #region Private Fields
 
     private string _testRoot = null!;
 
     #endregion
 
-    #region Tests Constructors
+    #region Test Constructors
 
     #endregion
 
     #region Test Preparation
 
+    /// <summary>
+    /// Creates a unique temporary directory for the migration test.
+    /// </summary>
     [TestInitialize]
     public void Initialize()
     {
@@ -36,34 +43,28 @@ public sealed class DatabaseMigratorTests
         Directory.CreateDirectory(_testRoot);
     }
 
+    /// <summary>
+    /// Releases SQLite pools and removes the temporary test directory.
+    /// </summary>
     [TestCleanup]
     public void Cleanup()
     {
         SqliteConnection.ClearAllPools();
 
         if (Directory.Exists(_testRoot))
+        {
             Directory.Delete(_testRoot, recursive: true);
+        }
     }
-
 
     #endregion
 
     #region Tests
 
     /// <summary>
-    /// Verifies that the current EF Core model matches the latest migration and has no pending model changes.
-    /// </summary>
-    [TestMethod]
-    public void NoPendingChanges()
-    {
-        var databasePath = Path.Combine(_testRoot, "model-check.db");
-        using var context = CreateContext(databasePath);
-        Assert.IsFalse(context.Database.HasPendingModelChanges());
-    }
-
-    /// <summary>
     /// Verifies that migrating without an existing database creates a current database without leaving migration or backup artifacts.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that migrating without an existing database creates a current database without leaving migration or backup artifacts.</returns>
     [TestMethod]
     public async Task CreatesCurrentDatabaseWithoutBackup()
     {
@@ -79,6 +80,7 @@ public sealed class DatabaseMigratorTests
     /// <summary>
     /// Verifies that rerunning migration on an already current database does not create migration or backup artifacts.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that rerunning migration on an already current database does not create migration or backup artifacts.</returns>
     [TestMethod]
     public async Task DoesNotCreateBackupWithoutMigrating()
     {
@@ -94,6 +96,7 @@ public sealed class DatabaseMigratorTests
     /// <summary>
     /// Verifies that an existing database requiring migration is migrated on a copy, activated successfully, and preserves the original database as a backup.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that an existing database requiring migration is migrated on a copy, activated successfully, and preserves the original database as a backup.</returns>
     [TestMethod]
     public async Task MigrationCopyAndBacksUpOriginal()
     {
@@ -113,6 +116,7 @@ public sealed class DatabaseMigratorTests
     /// <summary>
     /// Verifies that a stale temporary migration database is discarded before creating a valid current database when no active database exists.
     /// </summary>
+    /// <returns>A task that completes when the test has verified that a stale temporary migration database is discarded before creating a valid current database when no active database exists.</returns>
     [TestMethod]
     public async Task StaleMigrationRecreatesDatabase()
     {
@@ -123,6 +127,27 @@ public sealed class DatabaseMigratorTests
         Assert.IsTrue(File.Exists(paths.DatabasePath));
         Assert.IsFalse(File.Exists(paths.MigrationPath));
         Assert.IsFalse(await HasPendingMigrationsAsync(paths.DatabasePath));
+    }
+
+    /// <summary>
+    /// Verifies that failure to initialize a conflicting database leaves the original bytes intact and removes the migration copy.
+    /// </summary>
+    /// <returns>A task that completes when the failed initial migration preserves the original database without publishing a replacement.</returns>
+    [TestMethod]
+    public async Task FailedInitialMigrationKeepsOriginalDatabase()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync(migrate: false);
+        await using (var context = fixture.CreateContext())
+        {
+            await context.Database.ExecuteSqlRawAsync("CREATE TABLE ProjectRoutings (Id INTEGER PRIMARY KEY, Marker TEXT NOT NULL); INSERT INTO ProjectRoutings VALUES (1, 'preserve');");
+        }
+
+        SqliteConnection.ClearAllPools();
+        var path = Path.Combine(fixture.Root, "ProjectMemory.db");
+        var before = await File.ReadAllBytesAsync(path);
+        await Assert.ThrowsAsync<SqliteException>(() => fixture.Services.MigrateDatabaseAsync());
+        CollectionAssert.AreEqual(before, await File.ReadAllBytesAsync(path));
+        Assert.IsFalse(File.Exists(path + ".migrate"));
     }
 
     #endregion

@@ -16,7 +16,7 @@ public enum ContextResolutionStatus
     NotBound,
 
     /// <summary>
-    /// The target project routing is inactive.
+    /// The target project is archived or otherwise unavailable for ordinary routing.
     /// </summary>
     ProjectRoutingInactive,
 

@@ -66,7 +66,7 @@ public interface IProjectRegistry
     /// <param name="status">The initial routing status.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The created project routing.</returns>
-    Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, Status status, CancellationToken cancellationToken = default);
+    Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, ProjectStatus status, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Attempts to remove the registered project routing and its dependent context bindings.
@@ -105,7 +105,7 @@ public interface IProjectRegistry
     /// <param name="newStatus">The status to persist.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns><see langword="true"/> when exactly one routing was updated; otherwise <see langword="false"/>.</returns>
-    Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default);
+    Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, ProjectStatus expectedStatus, ProjectStatus newStatus, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Attempts to change a context-binding status only when the persisted status still matches the expected status.
@@ -124,6 +124,43 @@ public interface IProjectRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns><see langword="true"/> when exactly one binding was removed; otherwise <see langword="false"/>.</returns>
     Task<bool> TryRemoveBindingAsync(ContextId contextId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists a stable bounded page of projects.
+    /// </summary>
+    /// <param name="offset">The number of projects to skip in the stable name and identifier ordering.</param>
+    /// <param name="limit">The maximum number of projects to return; must be positive.</param>
+    /// <param name="cancellationToken">The token used to cancel the database query.</param>
+    /// <returns>A task containing the requested page of active and archived projects.</returns>
+    Task<IReadOnlyList<ProjectRouting>> ListProjectsPageAsync(int offset, int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists a stable bounded page of bindings, optionally limited to one explicit project.
+    /// </summary>
+    /// <param name="projectId">The project to filter by, or <see langword="null"/> to include every project.</param>
+    /// <param name="offset">The number of bindings to skip in the stable type, exact name and row identifier ordering.</param>
+    /// <param name="limit">The maximum number of bindings to return; must be positive.</param>
+    /// <param name="cancellationToken">The token used to cancel the database query.</param>
+    /// <returns>A task containing the requested exact bindings, including preserved inactive bindings.</returns>
+    Task<IReadOnlyList<ContextBinding>> ListBindingsPageAsync(Guid? projectId, int offset, int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Atomically checks project availability and creates or confirms an exact active binding.
+    /// </summary>
+    /// <param name="contextId">The validated, case-sensitive context key to bind or confirm.</param>
+    /// <param name="projectId">The immutable identifier of the active target project.</param>
+    /// <param name="cancellationToken">The token used to cancel the transactional operation.</param>
+    /// <returns>A task containing the binding snapshot and change flag, or a missing-project, archived-project or binding-conflict error.</returns>
+    Task<RegistryChange<ContextBinding>> BindAsync(ContextId contextId, Guid projectId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Atomically sets project status while preserving IDs and bindings.
+    /// </summary>
+    /// <param name="projectId">The immutable identifier of the project to archive or reactivate.</param>
+    /// <param name="status">The requested active or archived project status.</param>
+    /// <param name="cancellationToken">The token used to cancel the transactional operation.</param>
+    /// <returns>A task containing the project snapshot and change flag, or a missing-project error.</returns>
+    Task<RegistryChange<ProjectRouting>> SetProjectStatusAsync(Guid projectId, ProjectStatus status, CancellationToken cancellationToken = default);
 
     #endregion
 }

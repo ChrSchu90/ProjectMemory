@@ -1,17 +1,17 @@
 ﻿namespace ProjectMemory.Routing;
 
 /// <summary>
-/// Status of a routing or binding.
+/// Retains legacy context-binding state; project lifecycle uses <see cref="ProjectStatus"/>.
 /// </summary>
 public enum Status
 {
     /// <summary>
-    /// The routing or binding is active and can be used.
+    /// The binding is active and can be used.
     /// </summary>
     Active,
 
     /// <summary>
-    /// The routing or binding is inactive and should not be used.
+    /// The binding is inactive and must not resolve a project.
     /// </summary>
     Inactive
 }
