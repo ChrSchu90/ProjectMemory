@@ -15,7 +15,7 @@ using ProjectMemory.Tools;
 /// </summary>
 /// <param name="options">The configured private data root.</param>
 /// <param name="checkpoint">Optional observer used to exercise interruption windows.</param>
-internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Action<LifecycleCheckpoint>? checkpoint = null)
+internal sealed partial class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Action<LifecycleCheckpoint>? checkpoint = null)
 {
     #region Static Fields
 
@@ -47,15 +47,7 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
     /// <param name="path">The unmodified, slash-separated Markdown address.</param>
     /// <returns>Whether the path is addressable through an ordinary memory tool.</returns>
     internal static bool ValidPath(string path)
-    {
-        if (path.Length is 0 or > 1024 || !path.EndsWith(".md", StringComparison.Ordinal))
-            return false;
-        var parts = path.Split('/');
-        return parts.Length <= 16 && parts.All(part => part.Length > 0
-            && part[0] is not ('.' or ' ') && part[^1] is not ('.' or ' ')
-            && part.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' or ' ') && Utf8.GetByteCount(part) <= 255)
-            && Utf8.GetByteCount(path) <= 1024;
-    }
+        => path.EndsWith(".md", StringComparison.Ordinal) && ValidRelativePath(path, 16);
 
     /// <summary>
     /// Reads full UTF-8 text or a bounded line range and hashes all raw bytes.
@@ -70,15 +62,7 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
         using var parent = OpenParent(id, path, false);
         var (bytes, _) = parent.Read(Leaf(path), MaximumBytes);
         VerifyParent(parent, id, path);
-        string text;
-        try
-        {
-            text = Utf8.GetString(bytes);
-        }
-        catch (DecoderFallbackException)
-        {
-            throw new MemoryFileException("INVALID_ENCODING");
-        }
+        var text = Decode(bytes);
 
         var start = SkipLines(text, 0, startLine - 1);
         var end = SkipLines(text, start, lineCount);
@@ -203,6 +187,17 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
 
     #region Private Methods
 
+    private static bool ValidRelativePath(string path, int maximumComponents)
+    {
+        if (path.Length is 0 or > 1024)
+            return false;
+        var parts = path.Split('/');
+        return parts.Length <= maximumComponents && parts.All(part => part.Length > 0
+            && part[0] is not ('.' or ' ') && part[^1] is not ('.' or ' ')
+            && part.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' or ' ') && Utf8.GetByteCount(part) <= 255)
+            && Utf8.GetByteCount(path) <= 1024;
+    }
+
     private void PurgeChildren(LinuxDirectory parent, CancellationToken token, int depth)
     {
         if (depth > 128)
@@ -235,14 +230,21 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
         if (!ValidPath(path))
             throw new MemoryFileException("INVALID_PATH");
         using var root = LinuxDirectory.OpenRoot(options.Value.DataDirectory);
+        var slash = path.LastIndexOf('/');
+        return OpenFolder(root, id, slash < 0 ? "" : path[..slash], create);
+    }
+
+    private static LinuxDirectory OpenFolder(LinuxDirectory root, Guid id, string folder, bool create)
+    {
         using var projects = root.DirectoryAt("projects", create);
         var current = projects.DirectoryAt(id.ToString("D"), create);
+        if (folder.Length == 0)
+            return current;
         try
         {
-            var parts = path.Split('/');
-            for (var i = 0; i < parts.Length - 1; i++)
+            foreach (var part in folder.Split('/'))
             {
-                var next = current.DirectoryAt(parts[i], create);
+                var next = current.DirectoryAt(part, create);
                 current.Dispose();
                 current = next;
             }
@@ -253,6 +255,18 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
         {
             current.Dispose();
             throw;
+        }
+    }
+
+    private static string Decode(byte[] bytes)
+    {
+        try
+        {
+            return Utf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new MemoryFileException("INVALID_ENCODING");
         }
     }
 
@@ -307,5 +321,9 @@ internal enum LifecycleCheckpoint
     /// <summary>A quarantine child was removed.</summary>
     PurgeEntry,
     /// <summary>The tree removal has been flushed, before registry cleanup.</summary>
-    Purged
+    Purged,
+    /// <summary>A navigation candidate has been inspected, before checking its name again.</summary>
+    ScanEntry,
+    /// <summary>Search is about to reopen an enumerated file for its bounded content read.</summary>
+    SearchRead
 }

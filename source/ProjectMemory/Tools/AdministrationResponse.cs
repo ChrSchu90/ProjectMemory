@@ -57,6 +57,7 @@ internal sealed record AdministrationResponse<TData>(string ContractVersion, boo
         "MEMORY_NOT_FOUND" => "The selected memory does not exist.",
         "CONTENT_TOO_LARGE" => "Memory content exceeds the byte limit.",
         "INVALID_ENCODING" => "Memory content must be valid UTF-8 text.",
+        "SCAN_LIMIT" => "Scan limit reached. Select a smaller folder and retry.",
         _ => "The operation could not be completed."
     }));
 

@@ -119,13 +119,16 @@ internal sealed class LinuxDirectory : IDisposable
     /// </summary>
     /// <param name="name">The exact leaf name.</param>
     /// <param name="maximum">Maximum accepted raw byte length.</param>
+    /// <param name="expected">Optional identity observed when enumerating this file.</param>
     /// <returns>The bytes and the identity checked before and after reading.</returns>
-    internal (byte[] Bytes, FileIdentity Identity) Read(string name, int maximum)
+    internal (byte[] Bytes, FileIdentity Identity) Read(string name, int maximum, FileIdentity? expected = null)
     {
         using var pin = Handle(openat(_handle, name, PathOnly | Abi.NoFollow | CloseOnExec, 0));
         var before = InspectChild(pin, name);
         if (!before.IsRegular || before.Links != 1)
             throw new MemoryFileException("UNSAFE_PATH");
+        if (expected is not null && before != expected)
+            throw new MemoryFileException("CONFLICT");
         if (before.Size > (ulong)maximum)
             throw new MemoryFileException("CONTENT_TOO_LARGE");
 
@@ -173,6 +176,13 @@ internal sealed class LinuxDirectory : IDisposable
     /// <returns>Whether both handles denote the same directory.</returns>
     internal bool SameDirectory(LinuxDirectory other) =>
         _identity.Mount == other._identity.Mount && _identity.Device == other._identity.Device && _identity.Inode == other._identity.Inode;
+
+    /// <summary>
+    /// Compares the directory observed before enumeration with a fresh traversal after it.
+    /// </summary>
+    /// <param name="current">The directory reopened from the configured root.</param>
+    /// <returns>Whether the inode, mount and metadata, including change time, still match.</returns>
+    internal bool MatchesSnapshot(LinuxDirectory current) => _identity == current._identity;
 
     /// <summary>
     /// Atomically moves a single entry between pinned directories.

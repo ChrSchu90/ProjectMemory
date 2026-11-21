@@ -1,6 +1,7 @@
 namespace ProjectMemory.Tests.Tools;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -55,6 +56,185 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     #endregion
 
     #region Tests
+
+    /// <summary>
+    /// Verifies that navigation observes live nested files, stable pages and literal hits across both transports and auth modes.
+    /// </summary>
+    /// <param name="protocol">The MCP protocol revision.</param>
+    /// <param name="token">Optional shared token.</param>
+    /// <returns>The asynchronous protocol verification.</returns>
+    [TestMethod]
+    [DataRow("2025-11-25", null)]
+    [DataRow("2025-11-25", "test-token")]
+    [DataRow("2026-07-28", null)]
+    [DataRow("2026-07-28", "test-token")]
+    public async Task NavigationReadsLiveSubtree(string protocol, string? token)
+    {
+        await using var host = await Fixture.StartAsync(token);
+        using var client = host.CreateClient(token);
+        var id = await ProjectAsync(client, Context);
+        var root = Path.Combine(host.Root, "projects", id);
+        var list = new { context_id = Context, folder = "Notes", limit = 1 };
+        var search = new { list.context_id, list.folder, list.limit, query = "C++ [x].*" };
+        var empty = await CallToolAsync(client, "list_memories", new { list.context_id }, protocol);
+        Assert.AreEqual(0, empty.GetProperty("data").GetProperty("paths").GetArrayLength());
+        var emptySearch = await CallToolAsync(client, "search_memories", new { list.context_id, search.query }, protocol);
+        Assert.AreEqual(0, emptySearch.GetProperty("data").GetProperty("matches").GetArrayLength());
+        Assert.IsFalse(Directory.Exists(root));
+        await CallToolAsync(client, "list_memories", list, protocol, "MEMORY_NOT_FOUND");
+
+        Directory.CreateDirectory(Path.Combine(root, "Notes", "deep"));
+        File.WriteAllText(Path.Combine(root, "Outside.md"), search.query);
+        var nested = Path.Combine(root, "Notes", "deep", "new.md");
+        var first = Path.Combine(root, "Notes", "A.md");
+        File.WriteAllText(nested, "Second file: " + search.query);
+        File.WriteAllText(first, "heading\r\nUse c++ [X].* here.\r\n" + search.query);
+        foreach (var name in new[] { ".private.md", "not-markdown.txt", "upper.MD", "invalid?.md" })
+        {
+            File.WriteAllText(Path.Combine(root, "Notes", name), search.query);
+        }
+
+        var page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
+        Assert.AreEqual("Notes/A.md", page.GetProperty("paths")[0].GetString());
+        Assert.IsTrue(page.GetProperty("has_more").GetBoolean());
+        var next = (await CallToolAsync(client, "list_memories", new { list.context_id, list.folder, list.limit, offset = 1 }, protocol)).GetProperty("data");
+        Assert.AreEqual("Notes/deep/new.md", next.GetProperty("paths")[0].GetString());
+        Assert.IsFalse(next.GetProperty("has_more").GetBoolean());
+        var found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        Assert.IsTrue(found.GetProperty("has_more").GetBoolean());
+        Assert.AreEqual(0, found.GetProperty("skipped_files").GetInt32());
+        var hit = found.GetProperty("matches")[0];
+        Assert.AreEqual("Notes/A.md", hit.GetProperty("path").GetString());
+        Assert.AreEqual(2, hit.GetProperty("line").GetInt32());
+        Assert.AreEqual("Use c++ [X].* here.", hit.GetProperty("excerpt").GetString());
+        Assert.IsFalse(hit.GetProperty("excerpt_truncated").GetBoolean());
+        var last = (await CallToolAsync(client, "search_memories", new { search.context_id, search.query, search.folder, search.limit, offset = 1 }, protocol)).GetProperty("data");
+        Assert.AreEqual("Notes/deep/new.md", last.GetProperty("matches")[0].GetProperty("path").GetString());
+        Assert.IsFalse(last.GetProperty("has_more").GetBoolean());
+
+        File.Move(nested, Path.Combine(root, "Notes", "moved.md"));
+        File.WriteAllText(first, "replacement");
+        found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        Assert.AreEqual("Notes/moved.md", found.GetProperty("matches")[0].GetProperty("path").GetString());
+        Assert.IsFalse(found.GetProperty("has_more").GetBoolean());
+        File.Delete(Path.Combine(root, "Notes", "moved.md"));
+        found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        Assert.AreEqual(0, found.GetProperty("matches").GetArrayLength());
+        page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
+        Assert.AreEqual("Notes/A.md", page.GetProperty("paths")[0].GetString());
+        Assert.IsFalse(page.GetProperty("has_more").GetBoolean());
+    }
+
+    /// <summary>
+    /// Verifies that only the exact active binding selects a project's paths and content, including case variants and aliases.
+    /// </summary>
+    /// <param name="tool">The scoped navigation tool.</param>
+    /// <returns>The asynchronous isolation verification.</returns>
+    [TestMethod]
+    [DataRow("list_memories")]
+    [DataRow("search_memories")]
+    public async Task NavigationRequiresExactBinding(string tool)
+    {
+        await using var host = await Fixture.StartAsync();
+        using var client = host.CreateClient();
+        var first = await ProjectAsync(client, "git:host/Org/Repo");
+        await ProjectAsync(client, "git:host/org/repo");
+        await CallToolAsync(client, "bind_context", new { context_id = "local:Work", project_id = first });
+        foreach (var (context, path) in new[] { ("git:host/Org/Repo", "One.md"), ("git:host/org/repo", "Two.md") })
+        {
+            await CallToolAsync(client, "create_memory", new { context_id = context, path, content = "needle " + path });
+        }
+
+        foreach (var (context, path) in new[] { ("git:host/Org/Repo", "One.md"), ("git:host/org/repo", "Two.md"), ("local:Work", "One.md") })
+        {
+            var response = await CallToolAsync(client, tool, NavigationArguments(tool, context));
+            var data = response.GetProperty("data");
+            var results = data.GetProperty(tool == "list_memories" ? "paths" : "matches");
+            Assert.AreEqual(1, results.GetArrayLength());
+            Assert.AreEqual(path, tool == "list_memories" ? results[0].GetString() : results[0].GetProperty("path").GetString());
+        }
+
+        foreach (var context in new[] { "local:work", "git:HOST/Org/Repo", "git:host/org/Repo", "chat:Work" })
+        {
+            await CallToolAsync(client, tool, NavigationArguments(tool, context), error: "CONTEXT_UNBOUND");
+        }
+
+        await CallToolAsync(client, tool, NavigationArguments(tool, "local:"), error: "INVALID_CONTEXT");
+        await CallToolAsync(client, tool, tool == "list_memories" ? new { } : (object)new { query = "needle" }, error: "INVALID_CONTEXT");
+        await CallToolAsync(client, "archive_project", new { project_id = first });
+        await CallToolAsync(client, tool, NavigationArguments(tool, "local:Work"), error: "PROJECT_ARCHIVED");
+    }
+
+    /// <summary>
+    /// Verifies that invalid subtree, paging and query arguments receive safe versioned errors.
+    /// </summary>
+    /// <returns>The asynchronous contract verification.</returns>
+    [TestMethod]
+    public async Task NavigationRejectsInvalidInputs()
+    {
+        await using var host = await Fixture.StartAsync();
+        using var client = host.CreateClient();
+        await ProjectAsync(client, Context);
+        foreach (var tool in new[] { "list_memories", "search_memories" })
+        {
+            var arguments = new Dictionary<string, object> { ["context_id"] = Context };
+            if (tool == "search_memories")
+            {
+                arguments.Add("query", "needle");
+            }
+
+            foreach (var folder in new[] { "../other", "/absolute", "notes//a", "notes/", "a\\b", ".private", new string('ä', 128), string.Join('/', Enumerable.Repeat("a", 16)) })
+            {
+                arguments["folder"] = folder;
+                await CallToolAsync(client, tool, arguments, error: "INVALID_PATH");
+            }
+
+            arguments["folder"] = "missing";
+            await CallToolAsync(client, tool, arguments, error: "MEMORY_NOT_FOUND");
+            arguments["folder"] = "";
+            foreach (var (key, value) in new (string, object)[] { ("limit", 0), ("limit", 201), ("offset", -1), ("offset", 1.5), ("project_id", "foreign") })
+            {
+                arguments[key] = value;
+                await CallToolAsync(client, tool, arguments, error: "INVALID_ARGUMENT");
+                arguments.Remove(key);
+            }
+
+            arguments["offset"] = int.MaxValue;
+            arguments["limit"] = 200;
+            var page = await CallToolAsync(client, tool, arguments);
+            Assert.IsFalse(page.GetProperty("data").GetProperty("has_more").GetBoolean());
+        }
+
+        foreach (var query in new[] { "", "   ", "two\nlines", new string('x', 129) })
+        {
+            await CallToolAsync(client, "search_memories", new { context_id = Context, query }, error: "INVALID_ARGUMENT");
+        }
+
+        await CallToolAsync(client, "search_memories", new { context_id = Context }, error: "INVALID_ARGUMENT");
+    }
+
+    /// <summary>
+    /// Verifies that a storage failure during navigation discards the result and keeps private diagnostics out of MCP.
+    /// </summary>
+    /// <param name="tool">The navigation operation.</param>
+    /// <returns>The asynchronous error-envelope verification.</returns>
+    [TestMethod]
+    [DataRow("list_memories")]
+    [DataRow("search_memories")]
+    public async Task NavigationStorageFailureIsSafe(string tool)
+    {
+        await using var host = await StartWithCheckpointAsync(point =>
+        {
+            if (point == LifecycleCheckpoint.ScanEntry)
+                throw new IOException("private-host-diagnostic");
+        });
+        using var client = host.CreateClient();
+        await ProjectAsync(client, Context);
+        await CreateAsync(client, Context, "needle");
+        var result = await CallToolAsync(client, tool, NavigationArguments(tool, Context), error: "STORAGE_UNAVAILABLE");
+        Assert.IsFalse(result.GetRawText().Contains("private-host-diagnostic", StringComparison.Ordinal));
+        Assert.IsFalse(result.GetRawText().Contains(host.Root, StringComparison.Ordinal));
+    }
 
     /// <summary>
     /// Verifies that each protocol and authentication mode supports exact Markdown CRUD and project deletion.
@@ -217,6 +397,8 @@ public sealed class MemoryToolsTests : ServerHostTestBase
                 await CallToolAsync(client, "reactivate_project", new { project_id = deleting }, error: "PROJECT_BLOCKED");
                 await CallToolAsync(client, "bind_context", new { project_id = deleting, context_id = "local:new" }, error: "PROJECT_BLOCKED");
                 await CallToolAsync(client, "read_memory", new { context_id = "local:delete", path = Note }, error: "PROJECT_ARCHIVED");
+                await CallToolAsync(client, "list_memories", new { context_id = "local:delete" }, error: "PROJECT_ARCHIVED");
+                await CallToolAsync(client, "search_memories", new { context_id = "local:delete", query = "doomed" }, error: "PROJECT_ARCHIVED");
             }
 
             Assert.AreEqual(1L, Scalar(original, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1 AND Status='Archived'"));
@@ -261,12 +443,19 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     /// Verifies that an obsolete resolved route cannot authorize access after archive, rebind or deletion.
     /// </summary>
     /// <param name="operation">The intervening registry change.</param>
+    /// <param name="tool">The operation paused after initial routing.</param>
     /// <returns>The asynchronous race verification.</returns>
     [TestMethod]
-    [DataRow("archive")]
-    [DataRow("delete")]
-    [DataRow("rebind")]
-    public async Task RevalidatesPreviouslyResolvedProject(string operation)
+    [DataRow("archive", "create_memory")]
+    [DataRow("delete", "create_memory")]
+    [DataRow("rebind", "create_memory")]
+    [DataRow("archive", "list_memories")]
+    [DataRow("delete", "list_memories")]
+    [DataRow("rebind", "list_memories")]
+    [DataRow("archive", "search_memories")]
+    [DataRow("delete", "search_memories")]
+    [DataRow("rebind", "search_memories")]
+    public async Task RevalidatesPreviouslyResolvedProject(string operation, string tool)
     {
         using var release = new ManualResetEventSlim(false);
         var routed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -282,7 +471,8 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         var id = await ProjectAsync(client, Context);
         var other = await ProjectAsync(client, "local:sibling");
         var error = operation switch { "archive" => "PROJECT_ARCHIVED", "delete" => "CONTEXT_UNBOUND", _ => "CONFLICT" };
-        var waiting = CallToolAsync(client, "create_memory", new { context_id = Context, path = Note, content = "obsolete" }, error: error);
+        var arguments = tool == "create_memory" ? new { context_id = Context, path = Note, content = "obsolete" } : NavigationArguments(tool, Context);
+        var waiting = CallToolAsync(client, tool, arguments, error: error);
         try
         {
             await routed.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -482,6 +672,9 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     #endregion
 
     #region Private Methods
+
+    private static object NavigationArguments(string tool, string context) => tool == "list_memories"
+        ? new { context_id = context } : new { context_id = context, query = "needle" };
 
     private static long Scalar(string root, string sql)
     {

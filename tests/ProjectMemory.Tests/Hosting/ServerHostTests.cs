@@ -68,7 +68,7 @@ public sealed class ServerHostTests : ServerHostTestBase
         using var list = await SendAsync(client, """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""");
         Assert.AreEqual(HttpStatusCode.OK, list.StatusCode);
         AssertToolDiscovery((await ReadResultAsync(list)).GetProperty("tools"));
-        using var call = await SendAsync(client, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_memories","arguments":{"context_id":"chat:test"}}}""");
+        using var call = await SendAsync(client, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unknown_tool","arguments":{}}}""");
         var error = await ReadMessageAsync(call);
         Assert.AreEqual(3, error.GetProperty("id").GetInt32());
         Assert.IsFalse(error.TryGetProperty("result", out _));
@@ -394,7 +394,7 @@ public sealed class ServerHostTests : ServerHostTestBase
 
     private static void AssertToolDiscovery(JsonElement tools)
     {
-        CollectionAssert.AreEquivalent(new[] { "list_projects", "create_project", "archive_project", "reactivate_project", "resolve_context", "list_context_bindings", "bind_context", "unbind_context", "create_memory", "read_memory", "update_memory", "delete_memory", "delete_project" }, tools.EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToArray());
+        CollectionAssert.AreEquivalent(new[] { "list_projects", "create_project", "archive_project", "reactivate_project", "resolve_context", "list_context_bindings", "bind_context", "unbind_context", "create_memory", "read_memory", "update_memory", "delete_memory", "delete_project", "list_memories", "search_memories" }, tools.EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToArray());
 
         foreach (var tool in tools.EnumerateArray())
         {
@@ -413,6 +413,8 @@ public sealed class ServerHostTests : ServerHostTestBase
                 "bind_context" => new[] { "context_id", "project_id", "changed" },
                 "create_memory" or "update_memory" or "delete_memory" => new[] { "path", "content_hash" },
                 "read_memory" => new[] { "path", "content_hash", "content" },
+                "list_memories" => new[] { "paths", "offset", "limit", "has_more" },
+                "search_memories" => new[] { "matches", "offset", "limit", "has_more", "skipped_files" },
                 "delete_project" => new[] { "project_id" },
                 _ => new[] { "context_id", "changed" }
             };
@@ -427,6 +429,8 @@ public sealed class ServerHostTests : ServerHostTestBase
             {
                 "create_memory" => new[] { "context_id", "path", "content" },
                 "read_memory" => new[] { "context_id", "path" },
+                "list_memories" => new[] { "context_id" },
+                "search_memories" => new[] { "context_id", "query" },
                 "update_memory" => new[] { "context_id", "path", "content", "expected_content_hash" },
                 "delete_memory" => new[] { "context_id", "path", "expected_content_hash" },
                 "delete_project" => new[] { "project_id" },
@@ -435,6 +439,24 @@ public sealed class ServerHostTests : ServerHostTestBase
             if (required is not null)
             {
                 CollectionAssert.AreEquivalent(required, input.GetProperty("required").EnumerateArray().Select(field => field.GetString()).ToArray());
+            }
+
+            if (tool.GetProperty("name").GetString() is "list_memories" or "search_memories")
+            {
+                var annotations = tool.GetProperty("annotations");
+                Assert.IsTrue(annotations.GetProperty("readOnlyHint").GetBoolean());
+                Assert.IsTrue(annotations.GetProperty("idempotentHint").GetBoolean());
+                Assert.IsFalse(annotations.GetProperty("openWorldHint").GetBoolean());
+                CollectionAssert.AreEquivalent(required!.Concat(["folder", "offset", "limit"]).ToArray(),
+                    input.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray());
+                Assert.AreEqual("1.0", output.GetProperty("properties").GetProperty("contract_version").GetProperty("const").GetString());
+                if (data.GetProperty("properties").TryGetProperty("matches", out var matches))
+                {
+                    var hit = matches.GetProperty("items");
+                    Assert.IsFalse(hit.GetProperty("additionalProperties").GetBoolean());
+                    CollectionAssert.AreEquivalent(new[] { "path", "line", "excerpt", "excerpt_truncated" },
+                        hit.GetProperty("required").EnumerateArray().Select(field => field.GetString()).ToArray());
+                }
             }
 
             Assert.IsFalse(input.GetProperty("additionalProperties").GetBoolean());
