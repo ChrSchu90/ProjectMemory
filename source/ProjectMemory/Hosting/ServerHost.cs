@@ -14,7 +14,6 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database;
-using ProjectMemory.Operations;
 using ProjectMemory.MemoryFiles;
 using ProjectMemory.Project;
 using ProjectMemory.Tools;

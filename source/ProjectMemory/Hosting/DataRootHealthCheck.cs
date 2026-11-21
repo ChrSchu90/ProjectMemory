@@ -1,4 +1,4 @@
-namespace ProjectMemory.Operations;
+namespace ProjectMemory.Hosting;
 
 using System;
 using System.IO;
