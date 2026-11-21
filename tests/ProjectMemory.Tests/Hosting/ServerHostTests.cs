@@ -414,7 +414,7 @@ public sealed class ServerHostTests : ServerHostTestBase
                 "create_memory" or "update_memory" or "delete_memory" => new[] { "path", "content_hash" },
                 "read_memory" => new[] { "path", "content_hash", "content" },
                 "list_memories" => new[] { "paths", "offset", "limit", "has_more" },
-                "search_memories" => new[] { "matches", "offset", "limit", "has_more", "skipped_files" },
+                "search_memories" => new[] { "view", "matches", "files", "counts", "context", "offset", "limit", "has_more", "limited_by_request" },
                 "delete_project" => new[] { "project_id" },
                 _ => new[] { "context_id", "changed" }
             };
@@ -447,14 +447,14 @@ public sealed class ServerHostTests : ServerHostTestBase
                 Assert.IsTrue(annotations.GetProperty("readOnlyHint").GetBoolean());
                 Assert.IsTrue(annotations.GetProperty("idempotentHint").GetBoolean());
                 Assert.IsFalse(annotations.GetProperty("openWorldHint").GetBoolean());
-                CollectionAssert.AreEquivalent(required!.Concat(["folder", "offset", "limit"]).ToArray(),
+                CollectionAssert.AreEquivalent(required!.Concat(tool.GetProperty("name").GetString() == "list_memories" ? new[] { "folder", "offset", "limit" } : ["folder", "file", "match", "files", "output"]).ToArray(),
                     input.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray());
                 Assert.AreEqual("1.0", output.GetProperty("properties").GetProperty("contract_version").GetProperty("const").GetString());
                 if (data.GetProperty("properties").TryGetProperty("matches", out var matches))
                 {
                     var hit = matches.GetProperty("items");
                     Assert.IsFalse(hit.GetProperty("additionalProperties").GetBoolean());
-                    CollectionAssert.AreEquivalent(new[] { "path", "line", "excerpt", "excerpt_truncated" },
+                    CollectionAssert.AreEquivalent(new[] { "path", "line", "end_line", "excerpt", "excerpt_truncated", "submatches" },
                         hit.GetProperty("required").EnumerateArray().Select(field => field.GetString()).ToArray());
                 }
             }

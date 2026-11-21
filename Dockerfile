@@ -37,7 +37,9 @@ RUN apk add --upgrade --no-cache \
         libgcc \
         libssl3 \
         libstdc++ \
+        ripgrep \
         zlib \
+    && /usr/bin/rg --pcre2-version \
     && mkdir -p /app /data \
     && chmod 0777 /data
 

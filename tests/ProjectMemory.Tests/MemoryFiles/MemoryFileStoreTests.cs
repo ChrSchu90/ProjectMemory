@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Configuration;
 using ProjectMemory.MemoryFiles;
+using ProjectMemory.Search;
 
 /// <summary>
 /// Exercises managed file publication, recovery and validation boundaries on private fixtures.
@@ -109,7 +110,7 @@ public sealed class MemoryFileStoreTests
         if (kind != "directory")
         {
             Refused(() => _store.List(_project, "", 0, 50, default), "UNSAFE_PATH");
-            Refused(() => _store.Search(_project, "outside", "", 0, 50, default), "UNSAFE_PATH");
+            Refused(() => Search("outside", "", 0, 50, default), "UNSAFE_PATH");
         }
         Assert.AreEqual("outside", File.ReadAllText(outside));
         Assert.HasCount(1, Directory.GetFileSystemEntries(_parent));
@@ -313,7 +314,7 @@ public sealed class MemoryFileStoreTests
     {
         Directory.CreateSymbolicLink(Path.Combine(Path.GetDirectoryName(_parent)!, "redirect"), _outside);
         Refused(() => _store.List(_project, folder, 0, 1, default), "UNSAFE_PATH");
-        Refused(() => _store.Search(_project, "outside", folder, 0, 1, default), "UNSAFE_PATH");
+        Refused(() => Search("outside", folder, 0, 1, default), "UNSAFE_PATH");
     }
 
     /// <summary>
@@ -336,7 +337,7 @@ public sealed class MemoryFileStoreTests
         };
         if (search)
         {
-            Assert.ThrowsExactly<OperationCanceledException>(() => _store.Search(_project, "needle", "", 0, 50, cancelled.Token));
+            Assert.ThrowsExactly<OperationCanceledException>(() => Search("needle", "", 0, 50, cancelled.Token));
         }
         else
         {
@@ -353,7 +354,7 @@ public sealed class MemoryFileStoreTests
     [TestMethod]
     public void NavigationSearchBoundsAndSkippedFiles()
     {
-        var query = new string('x', MemoryFileStore.MaximumQueryLength);
+        var query = new string('x', 128);
         _store.Write(_project, PathInProject, "first\n" + new string('a', 100) + "🐈" + new string('z', 31) + query + new string('z', 32) + "🐈" + new string('z', 200), null, default);
         File.WriteAllBytes(Path.Combine(_parent, "invalid.md"), [0xff]);
         using (var large = File.Create(Path.Combine(_parent, "large.md")))
@@ -361,15 +362,15 @@ public sealed class MemoryFileStoreTests
             large.SetLength(MemoryFileStore.MaximumBytes + 1);
         }
 
-        var page = _store.Search(_project, query, "", 0, 1, default);
-        Assert.AreEqual(2, page.SkippedFiles);
+        var page = Search(query, "", 0, 1, default);
+        Assert.HasCount(1, page.Matches);
         Assert.IsFalse(page.HasMore);
         var hit = page.Matches.Single();
         Assert.AreEqual(PathInProject, hit.Path);
         Assert.AreEqual(2, hit.Line);
         Assert.IsTrue(hit.ExcerptTruncated);
         Assert.Contains(query, hit.Excerpt);
-        Assert.IsLessThanOrEqualTo(MemoryFileStore.MaximumExcerptLength, hit.Excerpt.Length);
+        Assert.IsLessThanOrEqualTo(384, hit.Excerpt.Length);
         Assert.IsFalse(char.IsLowSurrogate(hit.Excerpt[0]));
         Assert.IsFalse(char.IsHighSurrogate(hit.Excerpt[^1]));
         Assert.HasCount(3, _store.List(_project, "", 0, 50, default).Paths);
@@ -390,7 +391,7 @@ public sealed class MemoryFileStoreTests
         Assert.IsEmpty(_store.List(_project, "nested", 0, 50, default).Paths);
         File.WriteAllText(Path.Combine(_parent, ".extra"), "");
         Refused(() => _store.List(_project, "nested", 0, 50, default), "SCAN_LIMIT");
-        Refused(() => _store.Search(_project, "needle", "nested", 0, 50, default), "SCAN_LIMIT");
+        Refused(() => Search("needle", "nested", 0, 50, default), "SCAN_LIMIT");
         Assert.IsEmpty(_store.List(_project, "nested/" + empty.Name, 0, 50, default).Paths);
     }
 
@@ -407,13 +408,13 @@ public sealed class MemoryFileStoreTests
         }
 
         var list = _store.List(_project, "", 0, 200, default);
-        var search = _store.Search(_project, "hit", "", 0, 200, default);
+        var search = Search("hit", "", 0, 200, default);
         Assert.IsTrue(list.HasMore);
         Assert.IsTrue(search.HasMore);
         CollectionAssert.AreEqual(paths[..200], list.Paths);
         CollectionAssert.AreEqual(list.Paths, search.Matches.Select(hit => hit.Path).ToArray());
         list = _store.List(_project, "", 200, 200, default);
-        search = _store.Search(_project, "hit", "", 200, 200, default);
+        search = Search("hit", "", 200, 200, default);
         Assert.IsFalse(list.HasMore);
         Assert.IsFalse(search.HasMore);
         Assert.AreEqual(paths[^1], list.Paths.Single());
@@ -426,34 +427,16 @@ public sealed class MemoryFileStoreTests
     [TestMethod]
     public void NavigationSearchByteBudget()
     {
-        for (var i = 0; i < MemoryFileStore.MaximumSearchBytes / MemoryFileStore.MaximumBytes; i++)
+        for (var i = 0; i < (16 * MemoryFileStore.MaximumBytes) / MemoryFileStore.MaximumBytes; i++)
         {
             using var stream = File.Create(Path.Combine(_parent, i + ".md"));
             stream.SetLength(MemoryFileStore.MaximumBytes);
         }
 
-        var exact = _store.Search(_project, "needle", "", 0, 1, default);
+        var exact = Search("needle", "", 0, 1, default);
         Assert.IsEmpty(exact.Matches);
-        Assert.AreEqual(0, exact.SkippedFiles);
         File.WriteAllText(Path.Combine(_parent, "extra.md"), "a");
-        Refused(() => _store.Search(_project, "needle", "", 0, 1, default), "SCAN_LIMIT");
-    }
-
-    /// <summary>
-    /// Verifies that a delayed final read cannot publish a search page after the cooperative deadline.
-    /// </summary>
-    [TestMethod]
-    public void NavigationDeadlineStopsSearch()
-    {
-        _store.Write(_project, PathInProject, "needle", null, default);
-        _observe = point =>
-        {
-            if (point == LifecycleCheckpoint.SearchRead)
-            {
-                Thread.Sleep(TimeSpan.FromSeconds(5.1));
-            }
-        };
-        Refused(() => _store.Search(_project, "needle", "", 0, 1, default), "SCAN_LIMIT");
+        Refused(() => Search("needle", "", 0, 1, default), "SCAN_LIMIT");
     }
 
     /// <summary>
@@ -480,6 +463,11 @@ public sealed class MemoryFileStoreTests
     #endregion
 
     #region Private Methods
+
+    private MemorySearchResult Search(string query, string folder, int offset, int limit, CancellationToken token)
+    {
+        return RipgrepSearchService.SearchAsync(_store, _project, new(query, folder, null, new(), new(), new(Offset: offset, Limit: limit)), token).GetAwaiter().GetResult();
+    }
 
     private static void Refused(Action operation, string code)
     {

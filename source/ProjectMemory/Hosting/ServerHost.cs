@@ -17,6 +17,7 @@ using ProjectMemory.Database;
 using ProjectMemory.MemoryFiles;
 using ProjectMemory.Project;
 using ProjectMemory.Tools;
+using ProjectMemory.Search;
 using Serilog.Core;
 using Serilog.Events;
 using Serilog.Sinks.SystemConsole.Themes;
@@ -95,6 +96,7 @@ internal static class ServerHost
                 // Diagnostic logs from ASP.NET Core and EF Core are too verbose for normal operation.
                 .MinimumLevel.Override("Microsoft", logLevelSwitch.MinimumLevel > LogEventLevel.Debug ? LogEventLevel.Warning : logLevelSwitch.MinimumLevel)
                 // EF diagnostics and lifetime startup messages can disclose connection/storage paths.
+                .MinimumLevel.Override("ModelContextProtocol", LogEventLevel.Warning)
                 .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Fatal)
                 .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Warning);
         });
@@ -104,6 +106,7 @@ internal static class ServerHost
         builder.Services.AddSingleton<ProjectManager>();
         builder.Services.AddSingleton<MemoryFileStore>();
         builder.Services.AddSingleton<MemoryManager>();
+        builder.Services.AddSingleton<RipgrepSearchService>();
         builder.Services.AddSingleton<ProjectDeletion>();
 
         // Register the HTTP MCP transport and the project and context administration tools.
@@ -128,6 +131,7 @@ internal static class ServerHost
             // Validate configuration and storage before initializing the database.
             _ = app.Services.GetRequiredService<IOptions<ProjectMemoryOptions>>().Value;
             var stopping = app.Lifetime.ApplicationStopping;
+            await RipgrepSearchService.VerifyBinaryAsync(stopping);
             var inventory = app.Services.GetRequiredService<MemoryFileStore>()
                 .Preflight(app.Services.GetRequiredService<DatabasePaths>(), stopping);
             var storage = app.Services.GetRequiredService<DataRootHealthCheck>();

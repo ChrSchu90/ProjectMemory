@@ -57,6 +57,12 @@ internal sealed record AdministrationResponse<TData>(string ContractVersion, boo
         "MEMORY_NOT_FOUND" => "The selected memory does not exist.",
         "CONTENT_TOO_LARGE" => "Memory content exceeds the byte limit.",
         "INVALID_ENCODING" => "Memory content must be valid UTF-8 text.",
+        "SEARCH_IO" => "Search process communication failed.",
+        "SEARCH_PROTOCOL" => "Search returned invalid data.",
+        "SEARCH_TIMEOUT" => "Search exceeded its deadline. Narrow the selection.",
+        "SEARCH_FAILED" => "Search could not complete.",
+        "SEARCH_UNAVAILABLE" => "The search executable is unavailable.",
+        "INVALID_PATTERN" => "Invalid search pattern or glob.",
         "SCAN_LIMIT" => "Scan limit reached. Select a smaller folder and retry.",
         _ => "The operation could not be completed."
     }));

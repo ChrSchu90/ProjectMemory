@@ -9,15 +9,17 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using ProjectMemory.MemoryFiles;
 using ProjectMemory.Project;
+using ProjectMemory.Search;
 
 /// <summary>
 /// Exposes exact-path Markdown operations within a revalidated active project.
 /// </summary>
 /// <param name="manager">The context and project access coordinator.</param>
 /// <param name="files">The bounded Markdown store.</param>
+/// <param name="search">The bounded ripgrep search adapter.</param>
 /// <param name="logger">The logger for safe storage diagnostics.</param>
 [McpServerToolType]
-internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, ILogger<MemoryTools> logger)
+internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, RipgrepSearchService search, ILogger<MemoryTools> logger)
 {
     #region Static Fields
 
@@ -57,25 +59,26 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
         AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Read, id => files.List(id, folder, offset, limit, cancellationToken), cancellationToken), logger);
 
     /// <summary>
-    /// Returns the first literal content match in each matching Markdown file.
+    /// Searches scoped Markdown through the bounded ripgrep adapter.
     /// </summary>
-    /// <param name="context_id">The exact bound context ID.</param>
-    /// <param name="query">A single-line nonblank literal, up to 128 UTF-16 code units.</param>
-    /// <param name="folder">Exact relative folder, or empty for the root.</param>
-    /// <param name="offset">Number of matching files to skip.</param>
-    /// <param name="limit">Maximum number of matching files to return.</param>
-    /// <param name="cancellationToken">Cancellation while routing, scanning and searching.</param>
-    /// <returns>The versioned page of hits or safe error with matching JSON fallback.</returns>
+    /// <param name="context_id">Exact active binding.</param>
+    /// <param name="query">Required primary pattern.</param>
+    /// <param name="folder">Optional directory scope.</param>
+    /// <param name="file">Optional single memory.</param>
+    /// <param name="match">Pattern semantics.</param>
+    /// <param name="files">Directory selection filters.</param>
+    /// <param name="output">Projection and pagination.</param>
+    /// <param name="cancellationToken">Request cancellation.</param>
+    /// <returns>A versioned page or a typed error.</returns>
     [McpServerTool(Name = "search_memories", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false, UseStructuredContent = true, OutputSchemaType = typeof(AdministrationResponse<MemorySearchResult>))]
-    [Description("Search live Markdown for a case-insensitive literal. Return the first hit per file in ordinal path order. Check has_more and skipped_files (oversized or invalid UTF-8). Narrow the folder on SCAN_LIMIT.")]
+    [Description("Search project Markdown. Defaults to every matching line for a case-insensitive literal. Use match for regex, files for globs, output for context, file paths, counts and paging.")]
     public Task<CallToolResult> SearchMemoriesAsync(
-        [Description("The exact bound git:, chat: or local: context ID."), RegularExpression("^(git|chat|local):[!-~]{1,255}$")] string context_id,
-        [Description("Nonblank literal without control characters, up to 128 UTF-16 code units."), MinLength(1), MaxLength(MemoryFileStore.MaximumQueryLength)] string query,
-        [Description("Exact project-relative subtree, or empty for the project root."), MaxLength(1024)] string folder = "",
-        [Description("Number of matching files to skip."), Range(0, int.MaxValue)] int offset = 0,
-        [Description("Page size from 1 through 200."), Range(1, 200)] int limit = 50,
-        CancellationToken cancellationToken = default) =>
-        AdministrationTools.ExecuteAsync(() => manager.RunAsync(context_id, ProjectAccess.Read, id => files.Search(id, query, folder, offset, limit, cancellationToken), cancellationToken), logger);
+        [Description("Exact active git:, chat: or local: binding.")] string context_id,
+        [Description("Nonblank pattern up to 512 UTF-16 units. Use regex escapes for multiline.")] string query,
+        [Description("Exact relative folder, empty for project root.")] string folder = "",
+        [Description("Exact .md path. Exclusive with folder and directory filters.")] string? file = null,
+        SearchMatch? match = null, SearchFiles? files = null, SearchOutput? output = null, CancellationToken cancellationToken = default) =>
+        AdministrationTools.ExecuteAsync(() => search.RunAsync(context_id, new SearchRequest(query, folder, file, match ?? new(), files ?? new(), output ?? new()), cancellationToken), logger);
 
     /// <summary>
     /// Create a Markdown file exclusively at the exact project-relative path.
@@ -191,18 +194,3 @@ internal sealed record MemoryReadResult(string Path, string ContentHash, string 
 /// <param name="Limit">Requested page capacity.</param>
 /// <param name="HasMore">Whether additional paths follow.</param>
 internal sealed record MemoryListResult(string[] Paths, int Offset, int Limit, bool HasMore);
-
-/// <summary>A live page of literal Markdown content matches.</summary>
-/// <param name="Matches">At most one hit per matching file, in ordinal path order.</param>
-/// <param name="Offset">Number of matching files skipped.</param>
-/// <param name="Limit">Requested page capacity.</param>
-/// <param name="HasMore">Whether additional searchable matches follow.</param>
-/// <param name="SkippedFiles">Number of oversized or invalid UTF-8 files in the subtree.</param>
-internal sealed record MemorySearchResult(MemorySearchHit[] Matches, int Offset, int Limit, bool HasMore, int SkippedFiles);
-
-/// <summary>The first matching line in one file.</summary>
-/// <param name="Path">Exact address for a subsequent read.</param>
-/// <param name="Line">One-based LF-delimited line number.</param>
-/// <param name="Excerpt">Bounded original text around the first match.</param>
-/// <param name="ExcerptTruncated">Whether the excerpt omits part of its source line.</param>
-internal sealed record MemorySearchHit(string Path, int Line, string Excerpt, bool ExcerptTruncated);

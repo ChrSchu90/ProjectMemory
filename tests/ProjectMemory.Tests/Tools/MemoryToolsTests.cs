@@ -148,7 +148,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         var id = await ProjectAsync(client, Context);
         var root = Path.Combine(host.Root, "projects", id);
         var list = new { context_id = Context, folder = "Notes", limit = 1 };
-        var search = new { list.context_id, list.folder, list.limit, query = "C++ [x].*" };
+        var search = new { list.context_id, list.folder, output = new { list.limit }, query = "C++ [x].*" };
         var empty = await CallToolAsync(client, "list_memories", new { list.context_id }, protocol);
         Assert.AreEqual(0, empty.GetProperty("data").GetProperty("paths").GetArrayLength());
         var emptySearch = await CallToolAsync(client, "search_memories", new { list.context_id, search.query }, protocol);
@@ -168,13 +168,13 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         Assert.IsFalse(next.GetProperty("has_more").GetBoolean());
         var found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
         Assert.IsTrue(found.GetProperty("has_more").GetBoolean());
-        Assert.AreEqual(0, found.GetProperty("skipped_files").GetInt32());
+        Assert.AreEqual("lines", found.GetProperty("view").GetString());
         var hit = found.GetProperty("matches")[0];
         Assert.AreEqual("Notes/A.md", hit.GetProperty("path").GetString());
         Assert.AreEqual(2, hit.GetProperty("line").GetInt32());
         Assert.AreEqual("Use c++ [X].* here.", hit.GetProperty("excerpt").GetString());
         Assert.IsFalse(hit.GetProperty("excerpt_truncated").GetBoolean());
-        var last = (await CallToolAsync(client, "search_memories", new { search.context_id, search.query, search.folder, search.limit, offset = 1 }, protocol)).GetProperty("data");
+        var last = (await CallToolAsync(client, "search_memories", new { search.context_id, search.query, search.folder, output = new { list.limit, offset = 2 } }, protocol)).GetProperty("data");
         Assert.AreEqual("Notes/deep/new.md", last.GetProperty("matches")[0].GetProperty("path").GetString());
         Assert.IsFalse(last.GetProperty("has_more").GetBoolean());
 
@@ -266,13 +266,20 @@ public sealed class MemoryToolsTests : ServerHostTestBase
                 arguments.Remove(key);
             }
 
-            arguments["offset"] = int.MaxValue;
-            arguments["limit"] = 200;
+            if (tool == "list_memories")
+            {
+                arguments["offset"] = int.MaxValue;
+                arguments["limit"] = 200;
+            }
+            else
+            {
+                arguments["output"] = new { offset = 100000, limit = 200 };
+            }
             var page = await CallToolAsync(client, tool, arguments);
             Assert.IsFalse(page.GetProperty("data").GetProperty("has_more").GetBoolean());
         }
 
-        foreach (var query in new[] { "", "   ", "two\nlines", new string('x', 129) })
+        foreach (var query in new[] { "", "   ", "two\nlines", new string('x', 513) })
         {
             await CallToolAsync(client, "search_memories", new { context_id = Context, query }, error: "INVALID_ARGUMENT");
         }

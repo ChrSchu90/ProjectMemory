@@ -214,6 +214,11 @@ internal sealed class AdministrationTools(ProjectManager projectManager, Project
                 projectId["format"] = "uuid";
             }
 
+            if (tool.ProtocolTool.Name == "search_memories")
+            {
+                Search.SearchRequest.DescribeSchema(input);
+            }
+
             tool.ProtocolTool.InputSchema = JsonSerializer.SerializeToElement(input);
             var output = JsonNode.Parse(tool.ProtocolTool.OutputSchema!.Value.GetRawText())!.AsObject();
             output["properties"]!["contract_version"]!["const"] = "1.0";
@@ -243,7 +248,7 @@ internal sealed class AdministrationTools(ProjectManager projectManager, Project
                     if (!properties.TryGetProperty(argument.Key, out var property))
                         return Encode(AdministrationResponse<object>.Failure("INVALID_ARGUMENT"));
 
-                    if (!IsValidArgument(property, argument.Value))
+                    if (!IsValidArgument(property, argument.Value, tool.ProtocolTool.Name == "search_memories"))
                         return Encode(AdministrationResponse<object>.Failure(argument.Key == "context_id" ? "INVALID_CONTEXT" : "INVALID_ARGUMENT"));
                 }
             }
@@ -292,12 +297,23 @@ internal sealed class AdministrationTools(ProjectManager projectManager, Project
     private Task<CallToolResult> ExecuteAsync<TData>(Func<Task<AdministrationResponse<TData>>> operation) where TData : class =>
         ExecuteAsync(operation, logger);
 
-    private static bool IsValidArgument(JsonElement property, JsonElement value)
+    private static bool IsValidArgument(JsonElement property, JsonElement value, bool search)
     {
         var type = property.GetProperty("type");
-        var integer = type.ValueKind == JsonValueKind.String && type.GetString() == "integer";
-        if (integer)
+        bool HasType(string name) => type.ValueKind == JsonValueKind.String ? type.GetString() == name
+            : type.EnumerateArray().Any(item => item.GetString() == name);
+        if (search && value.ValueKind == JsonValueKind.Null)
+            return HasType("null");
+        if (HasType("integer"))
             return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _);
+        if (HasType("boolean"))
+            return value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+        if (HasType("object"))
+            return value.ValueKind == JsonValueKind.Object && value.EnumerateObject().All(member =>
+                property.GetProperty("properties").TryGetProperty(member.Name, out var child) && IsValidArgument(child, member.Value, search));
+        if (HasType("array"))
+            return value.ValueKind == JsonValueKind.Array && value.GetArrayLength() <= 8
+                && value.EnumerateArray().All(item => IsValidArgument(property.GetProperty("items"), item, search));
         if (value.ValueKind != JsonValueKind.String)
             return false;
         try
