@@ -43,17 +43,17 @@ public interface IProjectRegistry
     Task<ProjectRoute?> FindRouteAsync(ContextId contextId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Finds a registered project routing by its Basic Memory external identifier.
+    /// Finds a registered project by its immutable server-owned identifier.
     /// </summary>
-    /// <param name="memoryProjectId">The Basic Memory external project identifier.</param>
+    /// <param name="memoryProjectId">The immutable server-owned project identifier.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The registered project routing, or <see langword="null"/> when no routing exists.</returns>
     Task<ProjectRouting?> FindByMemoryProjectIdAsync(Guid memoryProjectId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Finds a registered project routing by its Basic Memory project name.
+    /// Finds a registered project by its exact human-readable name.
     /// </summary>
-    /// <param name="memoryProjectName">The Basic Memory project name.</param>
+    /// <param name="memoryProjectName">The human-readable project name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The registered project routing, or <see langword="null"/> when no routing exists.</returns>
     Task<ProjectRouting?> FindByMemoryProjectNameAsync(string memoryProjectName, CancellationToken cancellationToken = default);
@@ -61,8 +61,8 @@ public interface IProjectRegistry
     /// <summary>
     /// Creates a registered project routing.
     /// </summary>
-    /// <param name="memoryProjectId">The Basic Memory external project identifier.</param>
-    /// <param name="memoryProjectName">The Basic Memory project name.</param>
+    /// <param name="memoryProjectId">The immutable server-owned project identifier.</param>
+    /// <param name="memoryProjectName">The human-readable project name.</param>
     /// <param name="status">The initial routing status.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The created project routing.</returns>
@@ -71,7 +71,7 @@ public interface IProjectRegistry
     /// <summary>
     /// Attempts to remove the registered project routing and its dependent context bindings.
     /// </summary>
-    /// <param name="memoryProjectId">The Basic Memory external project identifier.</param>
+    /// <param name="memoryProjectId">The immutable server-owned project identifier.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>
     /// <see langword="true"/> when exactly one project routing was removed;
@@ -91,7 +91,7 @@ public interface IProjectRegistry
     /// Creates a context binding for an existing registered project routing.
     /// </summary>
     /// <param name="contextId">The exact context identifier.</param>
-    /// <param name="memoryProjectId">The target Basic Memory project identifier.</param>
+    /// <param name="memoryProjectId">The target server-owned project identifier.</param>
     /// <param name="status">The initial binding status.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The created binding.</returns>
@@ -100,7 +100,7 @@ public interface IProjectRegistry
     /// <summary>
     /// Attempts to change a project-routing status only when the persisted status still matches the expected status.
     /// </summary>
-    /// <param name="memoryProjectId">The Basic Memory external project identifier.</param>
+    /// <param name="memoryProjectId">The immutable server-owned project identifier.</param>
     /// <param name="expectedStatus">The status that must currently be persisted.</param>
     /// <param name="newStatus">The status to persist.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

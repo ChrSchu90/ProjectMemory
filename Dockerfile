@@ -51,8 +51,9 @@ ENV \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true \
     ProjectMemory__DataDirectory=/data
 
-HEALTHCHECK --interval=30s --timeout=35s --start-period=30s --retries=3 \
-    CMD curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8000/health/ready > /dev/null || exit 1
+# ToDo: Add health check
+#HEALTHCHECK --interval=30s --timeout=35s --start-period=30s --retries=3 \
+#   CMD curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8000/health/ready > /dev/null || exit 1
 
 EXPOSE 8000
 VOLUME ["/data"]

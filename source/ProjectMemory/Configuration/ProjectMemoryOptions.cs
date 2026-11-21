@@ -43,6 +43,11 @@ public sealed class ProjectMemoryOptions
     /// </summary>
     public string DataDirectory { get; init; } = null!;
 
+    /// <summary>
+    /// Gets the optional shared MCP bearer token; absent or empty disables token checks.
+    /// </summary>
+    public string? BearerToken { get; init; }
+
     #endregion
 
     #region Public Methods

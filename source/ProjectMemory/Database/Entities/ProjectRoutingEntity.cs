@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectMemory.Routing;
 
 /// <summary>
-/// Represents a routing to a basic-memory project.
+/// Represents a server-owned memory project.
 /// </summary>
 [Table("ProjectRoutings"), Index(nameof(MemoryProjectId), IsUnique = true), Index(nameof(MemoryProjectName), IsUnique = true), Index(nameof(UpdatedAt))]
 internal sealed class ProjectRoutingEntity
@@ -34,13 +34,13 @@ internal sealed class ProjectRoutingEntity
     public long Id { get; set; }
 
     /// <summary>
-    /// Gets or sets the basic-memory project identifier.
+    /// Gets or sets the immutable server-owned project identifier.
     /// </summary>
     [Required]
     public Guid MemoryProjectId { get; set; }
 
     /// <summary>
-    /// Gets or sets the name of the basic-memory project.
+    /// Gets or sets the human-readable project name.
     /// </summary>
     [Required, MaxLength(255)]
     public string MemoryProjectName { get; set; } = null!;

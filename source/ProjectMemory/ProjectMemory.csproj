@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-	  <RollForward>Major</RollForward>
     <UserSecretsId>b4076b4f-10ac-40e0-9d04-aa6f4582de21</UserSecretsId>
   </PropertyGroup>
 

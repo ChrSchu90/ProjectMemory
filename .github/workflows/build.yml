@@ -12,8 +12,6 @@ on:
       - '**/*.md'
       - '**/*.png'
       - 'LICENSE*'
-      - '.github/compose.contract-test.yml'
-      - '.github/workflows/contract-test.yml'
     tags:
       - 'v*'
   pull_request:
@@ -30,7 +28,7 @@ env:
   APP_LINUX_ARM64_ARCHIVE: "ProjectMemory-linux-arm64.tar.gz"
   APP_WIN_X64_ARCHIVE: "ProjectMemory-win-x64.zip"
   DOCKER_REGISTRY: ghcr.io
-  DOCKER_FULL_IMAGE_NAME: ghcr.io/chrschu90/project-memory-proxy
+  DOCKER_FULL_IMAGE_NAME: ghcr.io/chrschu90/project-memory
   DOCKER_PLATFORMS: linux/amd64,linux/arm64/v8,linux/arm/v7
 
 jobs:

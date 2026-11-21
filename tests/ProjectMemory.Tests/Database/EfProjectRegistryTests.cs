@@ -223,7 +223,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that the database prevents two local project routings from using the same Basic Memory project name.
+    /// Verifies that the database prevents two local project routings from using the same project name.
     /// </summary>
     [TestMethod]
     public async Task DatabaseRejectsDuplicateMemoryProjectName()
@@ -249,7 +249,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that a registered project routing can be found by its Basic Memory external identifier.
+    /// Verifies that a registered project routing can be found by its external identifier.
     /// </summary>
     [TestMethod]
     public async Task FindByMemoryProjectIdAsyncReturnsRouting()
@@ -272,7 +272,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that a registered project routing can be found by its exact Basic Memory project name.
+    /// Verifies that a registered project routing can be found by its exact project name.
     /// </summary>
     [TestMethod]
     public async Task FindByMemoryProjectNameAsyncReturnsRouting()
@@ -295,7 +295,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that project-routing lookups return no result when the requested Basic Memory identity is not registered.
+    /// Verifies that project-routing lookups return no result when the requested identity is not registered.
     /// </summary>
     [TestMethod]
     public async Task ProjectRoutingLookupsReturnNullWhenRoutingDoesNotExist()
@@ -314,7 +314,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that creating a project routing persists its Basic Memory identity and requested initial status.
+    /// Verifies that creating a project routing persists its identity and requested initial status.
     /// </summary>
     [TestMethod]
     public async Task CreateAsyncPersistsProjectRouting()
@@ -850,7 +850,7 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that removing a project routing rejects an empty Basic Memory project identifier before accessing persistence.
+    /// Verifies that removing a project routing rejects an empty project identifier before accessing persistence.
     /// </summary>
     [TestMethod]
     public async Task TryRemoveProjectAsyncRejectsEmptyProjectId()

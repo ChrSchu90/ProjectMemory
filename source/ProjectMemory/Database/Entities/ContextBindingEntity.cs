@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectMemory.Routing;
 
 /// <summary>
-/// Represents a link from binding IDs to a basic-memory project.
+/// Represents a context mapping to a server-owned memory project.
 /// </summary>
 [Table("ContextBindings"), Index(nameof(BindingType), nameof(BindingName), IsUnique = true)]
 internal sealed class ContextBindingEntity

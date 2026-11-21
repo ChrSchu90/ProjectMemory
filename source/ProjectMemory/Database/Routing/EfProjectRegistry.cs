@@ -102,7 +102,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     public async Task<ProjectRouting?> FindByMemoryProjectIdAsync(Guid memoryProjectId, CancellationToken cancellationToken = default)
     {
         if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The Basic Memory project identifier must not be empty.", nameof(memoryProjectId));
+            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await dbContext.RoutingProjects
@@ -131,7 +131,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     public async Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, Status status, CancellationToken cancellationToken = default)
     {
         if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The Basic Memory project identifier must not be empty.", nameof(memoryProjectId));
+            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(memoryProjectName);
 
@@ -154,7 +154,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         }
         catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
         {
-            throw new ProjectRegistryConflictException("A project routing with the same Basic Memory project identifier or name already exists.", ex);
+            throw new ProjectRegistryConflictException("A project routing with the same project identifier or name already exists.", ex);
         }
 
         return new ProjectRouting(entity.MemoryProjectId, entity.MemoryProjectName, entity.Status);
@@ -164,7 +164,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     public async Task<bool> TryRemoveProjectAsync(Guid memoryProjectId, CancellationToken cancellationToken = default)
     {
         if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The Basic Memory project identifier must not be empty.", nameof(memoryProjectId));
+            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var affectedRows = await dbContext.RoutingProjects.Where(project => project.MemoryProjectId == memoryProjectId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
@@ -197,7 +197,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     {
         ArgumentNullException.ThrowIfNull(contextId);
         if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The Basic Memory project identifier must not be empty.", nameof(memoryProjectId));
+            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         if (status is not Status.Active and not Status.Inactive)
             throw new ArgumentOutOfRangeException(nameof(status), status, "The context binding status is unsupported.");
@@ -209,7 +209,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
                           .ConfigureAwait(false);
 
         if (project == null)
-            throw new InvalidOperationException($"No registered project routing exists for Basic Memory project '{memoryProjectId:D}'.");
+            throw new InvalidOperationException($"No registered project routing exists for project '{memoryProjectId:D}'.");
 
         var entity = new ContextBindingEntity
         {
@@ -236,7 +236,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     public async Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default)
     {
         if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The Basic Memory project identifier must not be empty.", nameof(memoryProjectId));
+            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         if (expectedStatus is not Status.Active and not Status.Inactive)
             throw new ArgumentOutOfRangeException(nameof(expectedStatus), expectedStatus, "The expected project routing status is unsupported.");
