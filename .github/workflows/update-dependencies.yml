@@ -32,7 +32,7 @@ jobs:
         ripgrep_current="$(sed -n -E 's/^ARG RIPGREP_VERSION=//p' Dockerfile | head -n1)"
         echo "ripgrep_current=$ripgrep_current" >> "$GITHUB_OUTPUT"
         echo "::notice::[info] ripgrep_current=$ripgrep_current"
-        ripgrep_latest="$(gh release view --repo go-ripgrep/ripgrep --json tagName --jq '.tagName' | sed 's/^v//')"
+        ripgrep_latest="$(gh release view --repo BurntSushi/ripgrep --json tagName --jq '.tagName' | sed 's/^v//')"
         echo "ripgrep_latest=$ripgrep_latest" >> "$GITHUB_OUTPUT"
         echo "::notice::[info] ripgrep_latest=$ripgrep_latest"
         [[ "$ripgrep_current" != "$ripgrep_latest" ]] && ripgrep_changed=true || ripgrep_changed=false
