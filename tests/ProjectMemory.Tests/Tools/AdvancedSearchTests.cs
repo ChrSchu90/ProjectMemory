@@ -144,8 +144,10 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
         }
     }
 
-    /// <summary>Verifies that malformed, incompatible and excessive requests retain structured typed errors.</summary>
-    /// <returns>The asynchronous fixture verification.</returns>
+    /// <summary>
+    /// Verifies that malformed options, out-of-range pages and invalid patterns return their expected search errors.
+    /// </summary>
+    /// <returns>A task that completes after verifying the error envelopes.</returns>
     [TestMethod]
     public async Task InvalidAdvancedArguments()
     {
@@ -158,7 +160,8 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
             await CallToolAsync(client, "search_memories", new { context_id = Context, query = "a", match = options }, error: "INVALID_ARGUMENT");
         }
 
-        foreach (var options in new object[] { new { view = "files", after = 1 }, new { before = -1 }, new { limit = 201 }, new { max_hits_per_file = 0 } })
+        foreach (var options in new object[] { new { view = "files", after = 1 }, new { before = -1 }, new { limit = 0 }, new { limit = 201 },
+            new { offset = -1 }, new { offset = 100001 }, new { offset = 1.5 }, new { max_hits_per_file = 0 } })
         {
             await CallToolAsync(client, "search_memories", new { context_id = Context, query = "a", output = options }, error: "INVALID_ARGUMENT");
         }

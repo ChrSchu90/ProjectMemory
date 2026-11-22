@@ -75,17 +75,19 @@ public sealed class ContextIdTests
     }
 
     /// <summary>
-    /// Verifies that a canonical Git repository context is parsed into its expected type and name.
+    /// Verifies that a Git repository context parses into its type and name and formats back to the original identifier.
     /// </summary>
     [TestMethod]
     public void TryParseParsesGitRepositoryContext()
     {
-        var success = ContextId.TryParse("git:github.com/ChrSchu90/ProjectMemory", out var contextId);
+        const string value = "git:github.com/ChrSchu90/ProjectMemory";
+        var success = ContextId.TryParse(value, out var contextId);
 
         Assert.IsTrue(success);
         Assert.IsNotNull(contextId);
         Assert.AreEqual(BindingType.GitRepository, contextId.BindingType);
         Assert.AreEqual("github.com/ChrSchu90/ProjectMemory", contextId.BindingName);
+        Assert.AreEqual(value, contextId.ToString());
     }
 
     /// <summary>
@@ -99,18 +101,6 @@ public sealed class ContextIdTests
         Assert.IsTrue(success);
         Assert.IsNotNull(contextId);
         Assert.AreEqual("git.example.com:2222/owner/repository", contextId.BindingName);
-    }
-
-    /// <summary>
-    /// Verifies that parsing and formatting a canonical context identifier preserves the original value.
-    /// </summary>
-    [TestMethod]
-    public void ToStringReturnsCanonicalContextId()
-    {
-        const string value = "git:github.com/ChrSchu90/ProjectMemory";
-
-        Assert.IsTrue(ContextId.TryParse(value, out var contextId));
-        Assert.AreEqual(value, contextId!.ToString());
     }
 
     /// <summary>

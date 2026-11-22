@@ -349,30 +349,25 @@ public sealed class MemoryFileStoreTests
     }
 
     /// <summary>
-    /// Verifies that search discloses unsearchable files and returns bounded excerpts containing the literal without splitting Unicode pairs.
+    /// Verifies that listing includes unsearchable files and that the searchable match has intact Unicode excerpt boundaries.
     /// </summary>
     [TestMethod]
     public void NavigationSearchBoundsAndSkippedFiles()
     {
         var query = new string('x', 128);
-        _store.Write(_project, PathInProject, "first\n" + new string('a', 100) + "🐈" + new string('z', 31) + query + new string('z', 32) + "🐈" + new string('z', 200), null, default);
-        File.WriteAllBytes(Path.Combine(_parent, "invalid.md"), [0xff]);
-        using (var large = File.Create(Path.Combine(_parent, "large.md")))
-        {
-            large.SetLength(MemoryFileStore.MaximumBytes + 1);
-        }
+        // The 48-unit lookback and the 384-unit excerpt both cut through an emoji.
+        var expectedExcerpt = new string('a', 47) + query + new string('z', 208);
+        _store.Write(_project, PathInProject, "first\n🐈" + expectedExcerpt + "🐈trailing text", null, default);
+        File.WriteAllBytes(Path.Combine(_parent, "invalid.md"), [.. Encoding.UTF8.GetBytes(query + "\n"), 0xff]);
+        File.WriteAllText(Path.Combine(_parent, "large.md"), (query + "\n").PadRight(MemoryFileStore.MaximumBytes + 1, 'a'));
 
         var page = Search(query, "", 0, 1, default);
-        Assert.HasCount(1, page.Matches);
         Assert.IsFalse(page.HasMore);
         var hit = page.Matches.Single();
         Assert.AreEqual(PathInProject, hit.Path);
         Assert.AreEqual(2, hit.Line);
         Assert.IsTrue(hit.ExcerptTruncated);
-        Assert.Contains(query, hit.Excerpt);
-        Assert.IsLessThanOrEqualTo(384, hit.Excerpt.Length);
-        Assert.IsFalse(char.IsLowSurrogate(hit.Excerpt[0]));
-        Assert.IsFalse(char.IsHighSurrogate(hit.Excerpt[^1]));
+        Assert.AreEqual(expectedExcerpt, hit.Excerpt);
         Assert.HasCount(3, _store.List(_project, "", 0, 50, default).Paths);
     }
 

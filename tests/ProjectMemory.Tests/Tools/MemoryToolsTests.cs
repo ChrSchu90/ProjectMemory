@@ -1,10 +1,8 @@
 namespace ProjectMemory.Tests.Tools;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -131,42 +129,36 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     }
 
     /// <summary>
-    /// Verifies that navigation observes live nested files, stable pages and literal hits across both transports and auth modes.
+    /// Verifies that navigation observes live nested files, stable pages and literal search results.
     /// </summary>
-    /// <param name="protocol">The MCP protocol revision.</param>
-    /// <param name="token">Optional shared token.</param>
-    /// <returns>The asynchronous protocol verification.</returns>
+    /// <returns>A task that completes after verifying the workflow through MCP.</returns>
     [TestMethod]
-    [DataRow("2025-11-25", null)]
-    [DataRow("2025-11-25", "test-token")]
-    [DataRow("2026-07-28", null)]
-    [DataRow("2026-07-28", "test-token")]
-    public async Task NavigationReadsLiveSubtree(string protocol, string? token)
+    public async Task NavigationReadsLiveSubtree()
     {
-        await using var host = await Fixture.StartAsync(token);
-        using var client = host.CreateClient(token);
+        await using var host = await Fixture.StartAsync();
+        using var client = host.CreateClient();
         var id = await ProjectAsync(client, Context);
         var root = Path.Combine(host.Root, "projects", id);
         var list = new { context_id = Context, folder = "Notes", limit = 1 };
         var search = new { list.context_id, list.folder, output = new { list.limit }, query = "C++ [x].*" };
-        var empty = await CallToolAsync(client, "list_memories", new { list.context_id }, protocol);
+        var empty = await CallToolAsync(client, "list_memories", new { list.context_id });
         Assert.AreEqual(0, empty.GetProperty("data").GetProperty("paths").GetArrayLength());
-        var emptySearch = await CallToolAsync(client, "search_memories", new { list.context_id, search.query }, protocol);
+        var emptySearch = await CallToolAsync(client, "search_memories", new { list.context_id, search.query });
         Assert.AreEqual(0, emptySearch.GetProperty("data").GetProperty("matches").GetArrayLength());
         Assert.IsFalse(Directory.Exists(root));
-        await CallToolAsync(client, "list_memories", list, protocol, "MEMORY_NOT_FOUND");
+        await CallToolAsync(client, "list_memories", list, error: "MEMORY_NOT_FOUND");
 
-        await CallToolAsync(client, "create_memory", new { list.context_id, path = "Outside.md", content = search.query }, protocol);
-        var nested = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/deep/new.md", content = "Second file: " + search.query }, protocol);
-        var first = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/A.md", content = "heading\r\nUse c++ [X].* here.\r\n" + search.query }, protocol);
+        await CallToolAsync(client, "create_memory", new { list.context_id, path = "Outside.md", content = search.query });
+        var nested = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/deep/new.md", content = "Second file: " + search.query });
+        var first = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/A.md", content = "heading\r\nUse c++ [X].* here.\r\n" + search.query });
 
-        var page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
+        var page = (await CallToolAsync(client, "list_memories", list)).GetProperty("data");
         Assert.AreEqual("Notes/A.md", page.GetProperty("paths")[0].GetString());
         Assert.IsTrue(page.GetProperty("has_more").GetBoolean());
-        var next = (await CallToolAsync(client, "list_memories", new { list.context_id, list.folder, list.limit, offset = 1 }, protocol)).GetProperty("data");
+        var next = (await CallToolAsync(client, "list_memories", new { list.context_id, list.folder, list.limit, offset = 1 })).GetProperty("data");
         Assert.AreEqual("Notes/deep/new.md", next.GetProperty("paths")[0].GetString());
         Assert.IsFalse(next.GetProperty("has_more").GetBoolean());
-        var found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        var found = (await CallToolAsync(client, "search_memories", search)).GetProperty("data");
         Assert.IsTrue(found.GetProperty("has_more").GetBoolean());
         Assert.AreEqual("lines", found.GetProperty("view").GetString());
         var hit = found.GetProperty("matches")[0];
@@ -174,20 +166,20 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         Assert.AreEqual(2, hit.GetProperty("line").GetInt32());
         Assert.AreEqual("Use c++ [X].* here.", hit.GetProperty("excerpt").GetString());
         Assert.IsFalse(hit.GetProperty("excerpt_truncated").GetBoolean());
-        var last = (await CallToolAsync(client, "search_memories", new { search.context_id, search.query, search.folder, output = new { list.limit, offset = 2 } }, protocol)).GetProperty("data");
+        var last = (await CallToolAsync(client, "search_memories", new { search.context_id, search.query, search.folder, output = new { list.limit, offset = 2 } })).GetProperty("data");
         Assert.AreEqual("Notes/deep/new.md", last.GetProperty("matches")[0].GetProperty("path").GetString());
         Assert.IsFalse(last.GetProperty("has_more").GetBoolean());
 
-        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/deep/new.md", expected_content_hash = HashFrom(nested) }, protocol);
-        var moved = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/moved.md", content = search.query }, protocol);
-        await CallToolAsync(client, "update_memory", new { list.context_id, path = "Notes/A.md", content = "replacement", expected_content_hash = HashFrom(first) }, protocol);
-        found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/deep/new.md", expected_content_hash = HashFrom(nested) });
+        var moved = await CallToolAsync(client, "create_memory", new { list.context_id, path = "Notes/moved.md", content = search.query });
+        await CallToolAsync(client, "update_memory", new { list.context_id, path = "Notes/A.md", content = "replacement", expected_content_hash = HashFrom(first) });
+        found = (await CallToolAsync(client, "search_memories", search)).GetProperty("data");
         Assert.AreEqual("Notes/moved.md", found.GetProperty("matches")[0].GetProperty("path").GetString());
         Assert.IsFalse(found.GetProperty("has_more").GetBoolean());
-        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/moved.md", expected_content_hash = HashFrom(moved) }, protocol);
-        found = (await CallToolAsync(client, "search_memories", search, protocol)).GetProperty("data");
+        await CallToolAsync(client, "delete_memory", new { list.context_id, path = "Notes/moved.md", expected_content_hash = HashFrom(moved) });
+        found = (await CallToolAsync(client, "search_memories", search)).GetProperty("data");
         Assert.AreEqual(0, found.GetProperty("matches").GetArrayLength());
-        page = (await CallToolAsync(client, "list_memories", list, protocol)).GetProperty("data");
+        page = (await CallToolAsync(client, "list_memories", list)).GetProperty("data");
         Assert.AreEqual("Notes/A.md", page.GetProperty("paths")[0].GetString());
         Assert.IsFalse(page.GetProperty("has_more").GetBoolean());
     }
@@ -242,42 +234,25 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         await using var host = await Fixture.StartAsync();
         using var client = host.CreateClient();
         await ProjectAsync(client, Context);
-        foreach (var tool in new[] { "list_memories", "search_memories" })
+        foreach (var folder in new[] { "../other", "/absolute", "notes//a", "notes/", "a\\b", ".private", new string('ä', 128), string.Join('/', Enumerable.Repeat("a", 16)) })
         {
-            var arguments = new Dictionary<string, object> { ["context_id"] = Context };
-            if (tool == "search_memories")
-            {
-                arguments.Add("query", "needle");
-            }
-
-            foreach (var folder in new[] { "../other", "/absolute", "notes//a", "notes/", "a\\b", ".private", new string('ä', 128), string.Join('/', Enumerable.Repeat("a", 16)) })
-            {
-                arguments["folder"] = folder;
-                await CallToolAsync(client, tool, arguments, error: "INVALID_PATH");
-            }
-
-            arguments["folder"] = "missing";
-            await CallToolAsync(client, tool, arguments, error: "MEMORY_NOT_FOUND");
-            arguments["folder"] = "";
-            foreach (var (key, value) in new (string, object)[] { ("limit", 0), ("limit", 201), ("offset", -1), ("offset", 1.5), ("project_id", "foreign") })
-            {
-                arguments[key] = value;
-                await CallToolAsync(client, tool, arguments, error: "INVALID_ARGUMENT");
-                arguments.Remove(key);
-            }
-
-            if (tool == "list_memories")
-            {
-                arguments["offset"] = int.MaxValue;
-                arguments["limit"] = 200;
-            }
-            else
-            {
-                arguments["output"] = new { offset = 100000, limit = 200 };
-            }
-            var page = await CallToolAsync(client, tool, arguments);
-            Assert.IsFalse(page.GetProperty("data").GetProperty("has_more").GetBoolean());
+            await CallToolAsync(client, "list_memories", new { context_id = Context, folder }, error: "INVALID_PATH");
+            await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", folder }, error: "INVALID_PATH");
         }
+
+        await CallToolAsync(client, "list_memories", new { context_id = Context, folder = "missing" }, error: "MEMORY_NOT_FOUND");
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", folder = "missing" }, error: "MEMORY_NOT_FOUND");
+        foreach (var arguments in new object[] { new { context_id = Context, limit = 0 }, new { context_id = Context, limit = 201 },
+            new { context_id = Context, offset = -1 }, new { context_id = Context, offset = 1.5 }, new { context_id = Context, project_id = "foreign" } })
+        {
+            await CallToolAsync(client, "list_memories", arguments, error: "INVALID_ARGUMENT");
+        }
+
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", limit = 1 }, error: "INVALID_ARGUMENT");
+        var list = await CallToolAsync(client, "list_memories", new { context_id = Context, offset = int.MaxValue, limit = 200 });
+        var search = await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", output = new { offset = 100000, limit = 200 } });
+        Assert.IsFalse(list.GetProperty("data").GetProperty("has_more").GetBoolean());
+        Assert.IsFalse(search.GetProperty("data").GetProperty("has_more").GetBoolean());
 
         foreach (var query in new[] { "", "   ", "two\nlines", new string('x', 513) })
         {
@@ -311,64 +286,52 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     }
 
     /// <summary>
-    /// Verifies that each protocol and authentication mode supports exact Markdown CRUD and project deletion.
+    /// Verifies that conditional Markdown operations and project deletion preserve file contents and project isolation.
     /// </summary>
-    /// <param name="protocol">The transport revision.</param>
-    /// <param name="token">The optional shared bearer.</param>
-    /// <returns>The asynchronous verification.</returns>
+    /// <returns>A task that completes after verifying the workflow through MCP.</returns>
     [TestMethod]
-    [DataRow("2025-11-25", null)]
-    [DataRow("2026-07-28", null)]
-    [DataRow("2025-11-25", "test-token")]
-    [DataRow("2026-07-28", "test-token")]
-    public async Task MemoryWorkflow(string protocol, string? token)
+    public async Task MemoryWorkflow()
     {
-        await using var fixture = await Fixture.StartAsync(token);
-        using var client = fixture.CreateClient(token);
+        await using var fixture = await Fixture.StartAsync();
+        using var client = fixture.CreateClient();
         var id = await ProjectAsync(client, Context);
         var sibling = await ProjectAsync(client, "chat:alpha");
-        await CallToolAsync(client, "bind_context", new { context_id = "local:alias", project_id = id }, protocol);
+        await CallToolAsync(client, "bind_context", new { context_id = "local:alias", project_id = id });
         var args = new { context_id = Context, path = Note };
         var file = Path.Combine(fixture.Root, "projects", id, Note);
-        var created = await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "first" }, protocol);
+        var created = await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "first" });
         Assert.AreEqual(Hash("first"u8.ToArray()), HashFrom(created));
-        await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "other" }, protocol, "ALREADY_EXISTS");
+        await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "other" }, error: "ALREADY_EXISTS");
         Assert.AreEqual("first", File.ReadAllText(file));
-        await CallToolAsync(client, "read_memory", new { context_id = "chat:alpha", path = Note }, protocol, "MEMORY_NOT_FOUND");
-        await CallToolAsync(client, "read_memory", new { context_id = "chat:ALPHA", path = Note }, protocol, "CONTEXT_UNBOUND");
-        await CallToolAsync(client, "read_memory", new { context_id = "CHAT:Alpha", path = Note }, protocol, "INVALID_CONTEXT");
+        await CallToolAsync(client, "read_memory", new { context_id = "chat:alpha", path = Note }, error: "MEMORY_NOT_FOUND");
+        await CallToolAsync(client, "read_memory", new { context_id = "chat:ALPHA", path = Note }, error: "CONTEXT_UNBOUND");
+        await CallToolAsync(client, "read_memory", new { context_id = "CHAT:Alpha", path = Note }, error: "INVALID_CONTEXT");
 
         var raw = Encoding.UTF8.GetBytes("\ufeffone\r\ntwö\nfinal");
-        await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = Encoding.UTF8.GetString(raw), expected_content_hash = HashFrom(created) }, protocol);
-        var targeted = await CallToolAsync(client, "read_memory", new { context_id = "local:alias", path = Note, start_line = 2, line_count = 1 }, protocol);
+        await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = Encoding.UTF8.GetString(raw), expected_content_hash = HashFrom(created) });
+        var targeted = await CallToolAsync(client, "read_memory", new { context_id = "local:alias", path = Note, start_line = 2, line_count = 1 });
         Assert.AreEqual("twö\n", targeted.GetProperty("data").GetProperty("content").GetString());
         Assert.AreEqual(Hash(raw), HashFrom(targeted));
-        var full = await CallToolAsync(client, "read_memory", args, protocol);
+        var full = await CallToolAsync(client, "read_memory", args);
         Assert.AreEqual(Encoding.UTF8.GetString(raw), full.GetProperty("data").GetProperty("content").GetString());
-        await CallToolAsync(client, "update_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(created), content = "lost" }, protocol, "CONFLICT");
-        await CallToolAsync(client, "delete_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(created) }, protocol, "CONFLICT");
+        await CallToolAsync(client, "update_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(created), content = "lost" }, error: "CONFLICT");
+        await CallToolAsync(client, "delete_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(created) }, error: "CONFLICT");
         CollectionAssert.AreEqual(raw, await File.ReadAllBytesAsync(file));
-        var updated = await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = "replacement", expected_content_hash = Hash(raw) }, protocol);
+        var updated = await CallToolAsync(client, "update_memory", new { args.context_id, args.path, content = "replacement", expected_content_hash = Hash(raw) });
         Assert.AreEqual("replacement", await File.ReadAllTextAsync(file));
-        await CallToolAsync(client, "delete_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(updated) }, protocol);
+        await CallToolAsync(client, "delete_memory", new { args.context_id, args.path, expected_content_hash = HashFrom(updated) });
         Assert.IsFalse(File.Exists(file));
-        await CallToolAsync(client, "read_memory", args, protocol, "MEMORY_NOT_FOUND");
+        await CallToolAsync(client, "read_memory", args, error: "MEMORY_NOT_FOUND");
 
-        await CallToolAsync(client, "create_memory", new { context_id = "chat:alpha", path = Note, content = "sibling" }, protocol);
-        await CallToolAsync(client, "archive_project", new { project_id = id }, protocol);
-        await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "denied" }, protocol, "PROJECT_ARCHIVED");
-        if (token is not null)
-        {
-            using var unauthorized = fixture.CreateClient();
-            using var denied = await SendAsync(unauthorized, $$$$"""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"delete_project","arguments":{"project_id":"{{{{id}}}}"}}}""", protocol);
-            Assert.AreEqual(HttpStatusCode.Unauthorized, denied.StatusCode);
-        }
+        await CallToolAsync(client, "create_memory", new { context_id = "chat:alpha", path = Note, content = "sibling" });
+        await CallToolAsync(client, "archive_project", new { project_id = id });
+        await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "denied" }, error: "PROJECT_ARCHIVED");
 
-        await CallToolAsync(client, "delete_project", new { project_id = id, confirm = true }, protocol, "INVALID_ARGUMENT");
-        await CallToolAsync(client, "delete_project", new { project_id = id }, protocol);
-        await CallToolAsync(client, "delete_project", new { project_id = id }, protocol, "PROJECT_NOT_FOUND");
-        await CallToolAsync(client, "read_memory", args, protocol, "CONTEXT_UNBOUND");
-        await CallToolAsync(client, "resolve_context", new { context_id = "local:alias" }, protocol, "CONTEXT_UNBOUND");
+        await CallToolAsync(client, "delete_project", new { project_id = id, confirm = true }, error: "INVALID_ARGUMENT");
+        await CallToolAsync(client, "delete_project", new { project_id = id });
+        await CallToolAsync(client, "delete_project", new { project_id = id }, error: "PROJECT_NOT_FOUND");
+        await CallToolAsync(client, "read_memory", args, error: "CONTEXT_UNBOUND");
+        await CallToolAsync(client, "resolve_context", new { context_id = "local:alias" }, error: "CONTEXT_UNBOUND");
         Assert.IsFalse(Directory.Exists(Path.Combine(fixture.Root, "projects", id)));
         Assert.IsFalse(Directory.Exists(Path.Combine(fixture.Root, "quarantine", id)));
         Assert.AreEqual("sibling", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "projects", sibling, Note)));

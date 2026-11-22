@@ -586,32 +586,6 @@ public sealed class EfProjectRegistryTests
     }
 
     /// <summary>
-    /// Verifies that a project routing and active context binding created through the registry resolve through the runtime routing manager.
-    /// </summary>
-    /// <returns>A task that completes when the test has verified that a project routing and active context binding created through the registry resolve through the runtime routing manager.</returns>
-    [TestMethod]
-    public async Task CreatedProjectAndBindingResolveThroughRoutingManager()
-    {
-        var options = ContextOptions.Create(_databasePath, pooling: false);
-        await using (var dbContext = new ProjectMemoryDbContext(options))
-        {
-            await dbContext.Database.MigrateAsync();
-        }
-
-        var memoryProjectId = Guid.NewGuid(); const string memoryProjectName = "project-a";
-        Assert.IsTrue(ContextId.TryParse("git:github.com/ChrSchu90/ProjectMemory", out var contextId));
-        var registry = CreateRegistry(_databasePath);
-        await registry.CreateAsync(memoryProjectId, memoryProjectName, ProjectStatus.Active, CancellationToken.None);
-        await registry.CreateBindingAsync(contextId!, memoryProjectId, Status.Active, CancellationToken.None);
-        var routingManager = new RoutingManager(registry, NullLogger<RoutingManager>.Instance);
-
-        var resolution = await routingManager.ResolveContextAsync(contextId!, CancellationToken.None);
-        Assert.AreEqual(ContextResolutionStatus.Resolved, resolution.Status);
-        Assert.AreEqual(memoryProjectId, resolution.MemoryProjectId);
-        Assert.AreEqual(memoryProjectName, resolution.MemoryProjectName);
-    }
-
-    /// <summary>
     /// Verifies that a project-routing status is updated when the persisted status matches the expected status.
     /// </summary>
     /// <returns>A task that completes when the test has verified that a project-routing status is updated when the persisted status matches the expected status.</returns>
@@ -814,6 +788,8 @@ public sealed class EfProjectRegistryTests
 
         var resolved = await routingManager.ResolveContextAsync(contextId!, CancellationToken.None);
         Assert.AreEqual(ContextResolutionStatus.Resolved, resolved.Status);
+        Assert.AreEqual(memoryProjectId, resolved.MemoryProjectId);
+        Assert.AreEqual(memoryProjectName, resolved.MemoryProjectName);
         Assert.IsTrue(await registry.TryUpdateBindingStatusAsync(contextId!, Status.Active, Status.Inactive, CancellationToken.None));
 
         var bindingInactive = await routingManager.ResolveContextAsync(contextId!, CancellationToken.None);

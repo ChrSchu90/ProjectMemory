@@ -102,6 +102,20 @@ public abstract class ServerHostTestBase
     }
 
     /// <summary>
+    /// Sends a tool invocation so the caller can inspect the HTTP response.
+    /// </summary>
+    /// <param name="client">The client targeting the isolated MCP host.</param>
+    /// <param name="name">The published tool name.</param>
+    /// <param name="arguments">The arguments serialized into the tool call.</param>
+    /// <param name="protocol">The MCP protocol revision used for the request.</param>
+    /// <returns>A task containing the HTTP response that the caller must dispose.</returns>
+    protected static Task<HttpResponseMessage> SendToolAsync(HttpClient client, string name, object arguments, string protocol)
+    {
+        var body = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 21, method = "tools/call", @params = new { name, arguments } });
+        return SendAsync(client, body, protocol);
+    }
+
+    /// <summary>
     /// Calls the named tool and verifies both encodings of its expected envelope.
     /// </summary>
     /// <param name="client">The isolated MCP client.</param>
@@ -112,9 +126,7 @@ public abstract class ServerHostTestBase
     /// <returns>The verified envelope.</returns>
     protected static async Task<JsonElement> CallToolAsync(HttpClient client, string name, object arguments, string protocol = "2025-11-25", string? error = null)
     {
-        var body = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 21, method = "tools/call", @params = new { name, arguments } });
-
-        using var response = await SendAsync(client, body, protocol);
+        using var response = await SendToolAsync(client, name, arguments, protocol);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         var result = await ReadResultAsync(response);
         var content = result.GetProperty("structuredContent");
