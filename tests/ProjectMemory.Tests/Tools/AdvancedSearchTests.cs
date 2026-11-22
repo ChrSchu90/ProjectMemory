@@ -92,6 +92,41 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
         Assert.AreEqual(1, dash.GetProperty("matches").GetArrayLength());
     }
 
+    /// <summary>
+    /// Verifies that nullable search options and bounded array arguments follow the advertised schema without losing error handling.
+    /// </summary>
+    /// <returns>A task that completes after successful searches and structured rejections at the array boundary.</returns>
+    [TestMethod]
+    public async Task NullableSearchOptionsAndArrayBoundaries()
+    {
+        await using var host = await Fixture.StartAsync();
+        using var client = host.CreateClient();
+        await Register(client);
+        await Note(client, "one.md", "needle\n");
+
+        var nullable = await CallToolAsync(client, "search_memories", new
+        {
+            context_id = Context, query = "needle", file = (string?)null,
+            match = (object?)null, files = (object?)null, output = (object?)null
+        });
+        Assert.AreEqual(1, nullable.GetProperty("data").GetProperty("matches").GetArrayLength());
+        var nestedNull = await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", match = new { alternatives = (string[]?)null } });
+        Assert.AreEqual(1, nestedNull.GetProperty("data").GetProperty("matches").GetArrayLength());
+
+        var alternatives = Enumerable.Repeat("unmatched", SearchRequest.MaximumListItems).ToArray();
+        var maximum = await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", match = new { alternatives } });
+        Assert.AreEqual(1, maximum.GetProperty("data").GetProperty("matches").GetArrayLength());
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", match = new { alternatives = alternatives.Append("extra").ToArray() } }, error: "INVALID_ARGUMENT");
+
+        var globs = Enumerable.Repeat("*.md", SearchRequest.MaximumListItems).ToArray();
+        var included = await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", files = new { include = globs } });
+        Assert.AreEqual(1, included.GetProperty("data").GetProperty("matches").GetArrayLength());
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", files = new { include = globs.Append("extra.md").ToArray() } }, error: "INVALID_ARGUMENT");
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = "needle", files = new { exclude = globs.Append("extra.md").ToArray() } }, error: "INVALID_ARGUMENT");
+        await CallToolAsync(client, "search_memories", new { context_id = Context, query = (string?)null }, error: "INVALID_ARGUMENT");
+        await CallToolAsync(client, "search_memories", new { context_id = (string?)null, query = "needle" }, error: "INVALID_CONTEXT");
+    }
+
     /// <summary>Verifies selection and ignore intersection across a stopped-volume corpus of 120 nested memories.</summary>
     /// <returns>The asynchronous fixture verification.</returns>
     [TestMethod]

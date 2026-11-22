@@ -12,6 +12,9 @@ internal sealed record AdministrationResponse<TData>(string ContractVersion, boo
 {
     #region Static Fields
 
+    /// <summary>The version shared by every MCP response and its published output schema.</summary>
+    internal const string CurrentContractVersion = "1.0";
+
     #endregion
 
     #region Private Fields
@@ -33,14 +36,14 @@ internal sealed record AdministrationResponse<TData>(string ContractVersion, boo
     /// </summary>
     /// <param name="data">The operation-specific payload to include in the response.</param>
     /// <returns>A successful response containing the supplied payload and no error.</returns>
-    public static AdministrationResponse<TData> Success(TData data) => new("1.0", true, data, null);
+    public static AdministrationResponse<TData> Success(TData data) => new(CurrentContractVersion, true, data, null);
 
     /// <summary>
     /// Creates an unsuccessful response with a safe fixed message.
     /// </summary>
     /// <param name="code">The stable administration error code used to select a safe message.</param>
     /// <returns>An unsuccessful response containing the error code and message, with no data payload.</returns>
-    public static AdministrationResponse<TData> Failure(string code) => new("1.0", false, null, new(code, code switch
+    public static AdministrationResponse<TData> Failure(string code) => new(CurrentContractVersion, false, null, new(code, code switch
     {
         "INVALID_CONTEXT" => "Supply an exact git:, chat: or local: context with 1-255 visible ASCII suffix characters.",
         "INVALID_ARGUMENT" => "Arguments do not match the tool contract.",

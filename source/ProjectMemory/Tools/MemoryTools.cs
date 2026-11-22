@@ -73,7 +73,7 @@ internal sealed class MemoryTools(MemoryManager manager, MemoryFileStore files, 
     [McpServerTool(Name = "search_memories", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false, UseStructuredContent = true, OutputSchemaType = typeof(AdministrationResponse<MemorySearchResult>))]
     [Description("Search project Markdown. Defaults to every matching line for a case-insensitive literal. Use match for regex, files for globs, output for context, file paths, counts and paging.")]
     public Task<CallToolResult> SearchMemoriesAsync(
-        [Description("Exact active git:, chat: or local: binding.")] string context_id,
+        [Description("The exact bound git:, chat: or local: context ID."), RegularExpression("^(git|chat|local):[!-~]{1,255}$")] string context_id,
         [Description("Nonblank pattern up to 512 UTF-16 units. Use regex escapes for multiline.")] string query,
         [Description("Exact relative folder, empty for project root.")] string folder = "",
         [Description("Exact .md path. Exclusive with folder and directory filters.")] string? file = null,

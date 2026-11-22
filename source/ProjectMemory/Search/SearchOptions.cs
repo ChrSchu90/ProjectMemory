@@ -32,7 +32,7 @@ internal sealed record SearchMatch(
 internal sealed record SearchFiles(
     [property: Description("Up to 8 ripgrep include globs, combined with OR.")] string[]? Include = null,
     [property: Description("Up to 8 ripgrep exclude globs. Exclusion wins.")] string[]? Exclude = null,
-    [property: Description("Maximum depth below folder. Direct children have depth 1. Range 1–16.")] int MaxDepth = 16,
+    [property: Description("Maximum depth below folder. Direct children have depth 1. Range 1–16.")] int MaxDepth = SearchRequest.MaximumDepth,
     [property: Description("Include eligible hidden entries. Dot names are never addressable.")] bool IncludeHidden = true,
     [property: Description("Apply .gitignore, .ignore and .rgignore from the selected directory only, in that order.")] bool RespectIgnoreFiles = false);
 
@@ -48,7 +48,7 @@ internal sealed record SearchOutput(
     [property: Description("Preceding lines per match, 0–8, lines view only.")] int Before = 0,
     [property: Description("Following lines per match, 0–8, lines view only.")] int After = 0,
     [property: Description("Rows skipped after sorting and projection, 0–100000.")] int Offset = 0,
-    [property: Description("Rows per page, 1–200.")] int Limit = 50,
+    [property: Description("Rows per page, 1–200.")] int Limit = SearchRequest.DefaultPageLimit,
     [property: Description("Keep the first 1–1000 matching records per file before projection.")] int? MaxHitsPerFile = null);
 
 /// <summary>Validated request shared by selection, process invocation and projection.</summary>
@@ -62,6 +62,27 @@ internal sealed record SearchRequest(string Query, string Folder, string? File, 
 {
 
     #region Static Fields
+
+    /// <summary>Maximum length of a search pattern in UTF-16 code units.</summary>
+    internal const int MaximumPatternLength = 512;
+    /// <summary>Maximum schema-advertised length of a search path in UTF-16 code units.</summary>
+    internal const int MaximumPathLength = 1024;
+    /// <summary>Maximum length of a ripgrep glob.</summary>
+    internal const int MaximumGlobLength = 256;
+    /// <summary>Maximum number of alternative patterns or filter globs.</summary>
+    internal const int MaximumListItems = 8;
+    /// <summary>Maximum directory depth below the selected search folder.</summary>
+    internal const int MaximumDepth = 16;
+    /// <summary>Maximum surrounding lines on either side of a search result.</summary>
+    internal const int MaximumContextLines = 8;
+    /// <summary>Maximum skipped rows in a search page.</summary>
+    internal const int MaximumOffset = 100_000;
+    /// <summary>Maximum returned rows in a search page.</summary>
+    internal const int MaximumPageLimit = 200;
+    /// <summary>Default number of returned rows in a search page.</summary>
+    internal const int DefaultPageLimit = 50;
+    /// <summary>Maximum retained match records per file when a cap is requested.</summary>
+    internal const int MaximumHitsPerFile = 1_000;
 
     #endregion
 
@@ -98,19 +119,19 @@ internal sealed record SearchRequest(string Query, string Folder, string? File, 
         var files = groups["files"]!["properties"]!;
         var output = groups["output"]!["properties"]!;
         groups["query"]!["minLength"] = 1;
-        groups["query"]!["maxLength"] = 512;
-        groups["folder"]!["maxLength"] = 1024;
-        groups["file"]!["maxLength"] = 1024;
-        Range(files["max_depth"]!, 1, 16, 16);
-        Range(output["before"]!, 0, 8, 0);
-        Range(output["after"]!, 0, 8, 0);
-        Range(output["offset"]!, 0, 100000, 0);
-        Range(output["limit"]!, 1, 200, 50);
-        Range(output["max_hits_per_file"]!, 1, 1000, null);
+        groups["query"]!["maxLength"] = MaximumPatternLength;
+        groups["folder"]!["maxLength"] = MaximumPathLength;
+        groups["file"]!["maxLength"] = MaximumPathLength;
+        Range(files["max_depth"]!, 1, MaximumDepth, MaximumDepth);
+        Range(output["before"]!, 0, MaximumContextLines, 0);
+        Range(output["after"]!, 0, MaximumContextLines, 0);
+        Range(output["offset"]!, 0, MaximumOffset, 0);
+        Range(output["limit"]!, 1, MaximumPageLimit, DefaultPageLimit);
+        Range(output["max_hits_per_file"]!, 1, MaximumHitsPerFile, null);
         foreach (var list in new[] { match["alternatives"]!, files["include"]!, files["exclude"]! })
         {
-            list["maxItems"] = 8;
-            list["items"]!["maxLength"] = list == match["alternatives"] ? 512 : 256;
+            list["maxItems"] = MaximumListItems;
+            list["items"]!["maxLength"] = list == match["alternatives"] ? MaximumPatternLength : MaximumGlobLength;
         }
 
         static void Range(JsonNode field, int min, int max, int? initial)
@@ -124,19 +145,19 @@ internal sealed record SearchRequest(string Query, string Folder, string? File, 
     /// <summary>Rejects incompatible options and requests exceeding search bounds.</summary>
     internal void Validate()
     {
-        static bool Pattern(string s) => !string.IsNullOrWhiteSpace(s) && s.Length <= 512 && !s.Any(char.IsControl);
-        static bool Glob(string s) => !string.IsNullOrEmpty(s) && s.Length <= 256 && !s.Any(char.IsControl)
+        static bool Pattern(string s) => !string.IsNullOrWhiteSpace(s) && s.Length <= MaximumPatternLength && !s.Any(char.IsControl);
+        static bool Glob(string s) => !string.IsNullOrEmpty(s) && s.Length <= MaximumGlobLength && !s.Any(char.IsControl)
             && s[0] is not ('!' or '/' or '#') && !s.Contains('\\') && !s.Split('/').Contains("..");
-        if (!Pattern(Query) || Match.Alternatives is { Length: > 8 } || Match.Alternatives?.All(Pattern) == false
+        if (!Pattern(Query) || Match.Alternatives is { Length: > MaximumListItems } || Match.Alternatives?.All(Pattern) == false
             || Match.Syntax is not ("literal" or "regex") || Match.Engine is not ("default" or "pcre2")
             || Match.Case is not ("ignore" or "sensitive" or "smart") || Match.Boundary is not ("any" or "word" or "line")
             || (Match.Syntax == "literal" && (Match.Engine == "pcre2" || Match.Multiline)) || (Match.Invert && Match.Multiline)
-            || Files.Include is { Length: > 8 } || Files.Exclude is { Length: > 8 }
-            || Files.Include?.All(Glob) == false || Files.Exclude?.All(Glob) == false || Files.MaxDepth is < 1 or > 16
+            || Files.Include is { Length: > MaximumListItems } || Files.Exclude is { Length: > MaximumListItems }
+            || Files.Include?.All(Glob) == false || Files.Exclude?.All(Glob) == false || Files.MaxDepth is < 1 or > MaximumDepth
             || (File is not null && (Folder.Length != 0 || Files != new SearchFiles()))
-            || Output.View is not ("lines" or "counts" or "files") || Output.Before is < 0 or > 8 || Output.After is < 0 or > 8
+            || Output.View is not ("lines" or "counts" or "files") || Output.Before is < 0 or > MaximumContextLines || Output.After is < 0 or > MaximumContextLines
             || (Output.View != "lines" && (Output.Before != 0 || Output.After != 0))
-            || Output.Offset is < 0 or > 100000 || Output.Limit is < 1 or > 200 || Output.MaxHitsPerFile is < 1 or > 1000)
+            || Output.Offset is < 0 or > MaximumOffset || Output.Limit is < 1 or > MaximumPageLimit || Output.MaxHitsPerFile is < 1 or > MaximumHitsPerFile)
             throw new MemoryFileException("INVALID_ARGUMENT");
     }
 

@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Hosting;
+using ProjectMemory.Search;
 using Serilog.Core;
 using Serilog.Events;
 
@@ -74,6 +75,54 @@ public sealed class ServerHostTests : ServerHostTestBase
         Assert.IsFalse(error.TryGetProperty("result", out _));
         Assert.IsLessThan(0, error.GetProperty("error").GetProperty("code").GetInt32());
         Assert.IsFalse(string.IsNullOrEmpty(error.GetProperty("error").GetProperty("message").GetString()));
+    }
+
+    /// <summary>
+    /// Verifies that search discovery exposes the same bounds used by runtime validation and the exact context ID pattern.
+    /// </summary>
+    /// <returns>A task that completes after inspecting the published MCP schemas.</returns>
+    [TestMethod]
+    public async Task SearchSchemaPublishesSharedLimitsAndExactContextPattern()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var client = fixture.CreateClient();
+        using var response = await SendAsync(client, """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""");
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var tools = (await ReadResultAsync(response)).GetProperty("tools").EnumerateArray().ToArray();
+        var search = tools.Single(tool => tool.GetProperty("name").GetString() == "search_memories");
+        var properties = search.GetProperty("inputSchema").GetProperty("properties");
+        var resolve = tools.Single(tool => tool.GetProperty("name").GetString() == "resolve_context");
+        Assert.AreEqual(resolve.GetProperty("inputSchema").GetProperty("properties").GetProperty("context_id").GetProperty("pattern").GetString(),
+            properties.GetProperty("context_id").GetProperty("pattern").GetString());
+
+        Assert.AreEqual(SearchRequest.MaximumPatternLength, properties.GetProperty("query").GetProperty("maxLength").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumPathLength, properties.GetProperty("folder").GetProperty("maxLength").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumPathLength, properties.GetProperty("file").GetProperty("maxLength").GetInt32());
+        var match = properties.GetProperty("match").GetProperty("properties");
+        var files = properties.GetProperty("files").GetProperty("properties");
+        var output = properties.GetProperty("output").GetProperty("properties");
+        foreach (var array in new[] { match.GetProperty("alternatives"), files.GetProperty("include"), files.GetProperty("exclude") })
+        {
+            Assert.AreEqual(SearchRequest.MaximumListItems, array.GetProperty("maxItems").GetInt32());
+        }
+
+        Assert.AreEqual(SearchRequest.MaximumPatternLength, match.GetProperty("alternatives").GetProperty("items").GetProperty("maxLength").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumGlobLength, files.GetProperty("include").GetProperty("items").GetProperty("maxLength").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumGlobLength, files.GetProperty("exclude").GetProperty("items").GetProperty("maxLength").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumDepth, files.GetProperty("max_depth").GetProperty("maximum").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumContextLines, output.GetProperty("before").GetProperty("maximum").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumContextLines, output.GetProperty("after").GetProperty("maximum").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumOffset, output.GetProperty("offset").GetProperty("maximum").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumPageLimit, output.GetProperty("limit").GetProperty("maximum").GetInt32());
+        Assert.AreEqual(SearchRequest.DefaultPageLimit, output.GetProperty("limit").GetProperty("default").GetInt32());
+        Assert.AreEqual(SearchRequest.MaximumHitsPerFile, output.GetProperty("max_hits_per_file").GetProperty("maximum").GetInt32());
+        foreach (var tool in tools)
+        {
+            Assert.AreEqual("1.0", tool.GetProperty("outputSchema").GetProperty("properties").GetProperty("contract_version").GetProperty("const").GetString());
+        }
+
+        await CallToolAsync(client, "list_projects", new { });
+        await CallToolAsync(client, "list_projects", new { limit = 0 }, error: "INVALID_ARGUMENT");
     }
 
     /// <summary>
