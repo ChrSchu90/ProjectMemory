@@ -91,14 +91,12 @@ internal static class ServerHost
             logLevelSwitch.MinimumLevel = Enum.Parse<LogEventLevel>(options.LogLevel, true);
 
             configuration.MinimumLevel.ControlledBy(logLevelSwitch)
-                .WriteTo.Console(outputTemplate: "[{Timestamp:dd.MM.yyyy HH:mm:ss.fff} {Level:u3}] {Message:lj}{NewLine}{Exception}", theme: AnsiConsoleTheme.Sixteen, applyThemeToRedirectedOutput: true)
-
-                // Diagnostic logs from ASP.NET Core and EF Core are too verbose for normal operation.
-                .MinimumLevel.Override("Microsoft", logLevelSwitch.MinimumLevel > LogEventLevel.Debug ? LogEventLevel.Warning : logLevelSwitch.MinimumLevel)
-                // EF diagnostics and lifetime startup messages can disclose connection/storage paths.
-                .MinimumLevel.Override("ModelContextProtocol", LogEventLevel.Warning)
-                .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Fatal)
-                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Warning);
+                .WriteTo.Console(outputTemplate: "[{Timestamp:dd.MM.yyyy HH:mm:ss.fff} {Level:u3}] {Message:lj}{NewLine}{Exception}", theme: AnsiConsoleTheme.Sixteen, applyThemeToRedirectedOutput: true);
+                // ToDo: Should we limit log output? For now, no, since the log level can be configured by the end user and detailed logs are useful for diagnostic purposes.
+                //.MinimumLevel.Override("Microsoft", logLevelSwitch.MinimumLevel > LogEventLevel.Debug ? LogEventLevel.Warning : logLevelSwitch.MinimumLevel)
+                //.MinimumLevel.Override("ModelContextProtocol", LogEventLevel.Warning)
+                //.MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Fatal)
+                //.MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Warning);
         });
 
         // Register the existing SQLite persistence and routing services.
