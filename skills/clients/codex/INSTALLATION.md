@@ -2,7 +2,7 @@
 
 ## Status
 
-This directory contains **offline-authored source** for the Codex CLI Skill, based on ProjectMemory `PLAN.md` v0037 (D-029/D-030/T-015). The common technical references and icon are centrally maintained under `skills/common/`. No build script or release workflow is included yet. Offline source checking does not demonstrate a real Codex-to-MCP connection or production support; M4-B remains held under D-026.
+This directory contains Codex CLI Skill source. Shared technical references and the icon are maintained under `skills/common/`. It is not a packaged installation, and the source files do not configure or verify a working Codex-to-MCP connection.
 
 ## Source organization
 
@@ -11,9 +11,9 @@ This directory contains **offline-authored source** for the Codex CLI Skill, bas
 - `skills/clients/codex/instructions/AGENTS.md`: a **mergeable** ProjectMemory instruction section; do not overwrite existing project rules.
 - `skills/common/references/`: shared technical documentation. Coding-specific Git identity guidance is in `git-identity.md`.
 
-The relative links in the source entrypoint refer to `../../common/references/`. They work inside the repository source tree, **not** if only `SKILL.md` is copied to an installed skill location. A later workflow or Bash helper can create self-contained packages by copying the referenced common files into `project-memory/references/` and rewriting those links to package-local `references/` paths.
+The relative links in the source entrypoint refer to `../../common/references/`. They work inside the repository source tree, **not** if only `SKILL.md` is copied to an installed skill location. For a self-contained installation, copy the referenced common files into `project-memory/references/` and rewrite the links to package-local `references/` paths.
 
-## Install a complete Skill when authorized
+## Install a complete Skill
 
 Codex supports skill directories such as:
 
@@ -28,12 +28,12 @@ Merge the ProjectMemory text from `skills/clients/codex/instructions/AGENTS.md` 
 
 ## Configure routing independently
 
-1. Configure an effectively protected ProjectMemory MCP connection using the supported Codex settings when authorized. The skill does not install, authenticate, or expose a server.
+1. Configure an effectively protected ProjectMemory MCP connection using the supported Codex settings. The skill does not install, authenticate, or expose a server.
 2. Inspect the **actual task repository's unambiguous fetch `origin`**. Example: `https://github.com/SomeUser/Repo1.git` can derive `git:github.com/SomeUser/Repo1` under a reviewed host/transport policy. Preserve the owner/path case; lowercase the DNS host only.
 3. Require the resulting key to be explicitly registered and bound by an authorized operator. If the repository has **no remotes at all**, an already configured and bound `local:` key is permitted. Having other remotes but no `origin` is not a no-remotes case.
 4. If routing or tool access is unavailable, continue the task without ProjectMemory rather than guessing an alternative ID or altering bindings.
 
-**No credentials, actual service endpoint, real bindings, or client tests are included in this source.** Never expose token-disabled HTTP publicly without an independently verified protection boundary; real client tests belong only to a separately authorized M4-B phase.
+**No credentials, actual service endpoint, real bindings, or client tests are included in this source.** Never expose token-disabled HTTP publicly without an independently verified protection boundary. Before use, verify tool discovery and permissions in the configured client.
 
 ## Safety and compatibility
 

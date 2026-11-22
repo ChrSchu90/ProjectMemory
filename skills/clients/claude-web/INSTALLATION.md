@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-This directory contains **offline skill source**, not an already installed Claude skill or connected MCP connector. The planned common references live in `skills/common/references/`; the eventual distributable `project-memory/` skill must contain its own local `references/` copies. Building/uploading packages is intentionally deferred to a later workflow or simple release script.
+This directory contains Claude Web Skill source, not an installed skill or connected MCP connector. Shared references live in `skills/common/references/`; a standalone `project-memory/` skill must contain local copies under `references/`. No installable archive is provided here.
 
-This adaptation follows the ProjectMemory `PLAN.md` v0037 interface and D-029/D-030. Real Claude Web MCP and access-control interoperability remains outside this offline work and requires the separate D-026/M4-B authorization.
+These files do not establish a live Claude Web-to-MCP connection. Configure the skill and remote connector separately, then verify tool discovery, permissions, context isolation, and protected access before use.
 
 ## User-facing templates
 
@@ -12,13 +12,13 @@ This adaptation follows the ProjectMemory `PLAN.md` v0037 interface and D-029/D-
 - [`instructions/PROJECT-INSTRUCTIONS.md`](instructions/PROJECT-INSTRUCTIONS.md): replace the illustrative IDs and apply the text under **Project instructions** in the appropriate Claude Project.
 - `SKILL.md`: Claude Web skill entrypoint. The complete distributable skill must also contain the shared technical references and any supported assets.
 
-## Installation approach (future deployment)
+## Installation approach
 
-1. Assemble a **standalone** skill folder named `project-memory/` with `SKILL.md` and `references/` copied from the shared source; rewrite the source links from `../../common/references/` to package-local `references/`. The future release workflow or Bash helper will perform this assembly. Do not upload this repository source directory directly as a complete skill.
+1. Assemble a **standalone** skill folder named `project-memory/` with `SKILL.md` and `references/` copied from the shared source; rewrite the source links from `../../common/references/` to package-local `references/`. Prepare and check this directory structure before upload. Do not upload this repository source directory directly as a complete skill.
 2. Follow Claude's supported custom Skill upload flow through **Customize > Skills**. Claude's current custom-skill flow uses a ZIP containing the skill directory and may require enabling code execution. Exact UI and account permissions must be checked at installation time.
 3. Configure the **separate remote MCP custom connector** via Claude's supported connector settings. Claude Web connects from Anthropic cloud infrastructure; an accessible and effectively protected external HTTPS route is required for cloud usage. Do not expose the private HTTP backend directly or invent a tunnel/credential setup.
 4. Have an authorized operator explicitly register and bind the exact primary `chat:` (or deliberately chosen bound `git:`) context. Associated Git IDs are informational: they do not replace the primary ID or create bindings.
-5. After the owner separately authorizes M4-B, verify actual connector discovery, permission prompts, search results, context isolation, and negative-access behavior. **No such test is performed by these files.**
+5. Verify actual connector discovery, permission prompts, search results, context isolation, and negative-access behavior in the configured client. **These source files do not perform those tests.**
 
 ## ProjectMemory conventions
 

@@ -50,4 +50,4 @@ This example is **not** a predefined required project structure, confirmed live-
 
 ## No mandatory workflow
 
-A user's project might have no `PLAN.md`, ADRs, milestones, fixed folders, or formal decision records. Do not impose any of those. The ProjectMemory skill guides **safe storage and retrieval**, not how the user should plan their work.
+A user's project might have no formal planning documents, ADRs, fixed folders, or decision records. Do not impose any of those. The ProjectMemory skill guides **safe storage and retrieval**, not how the user should plan their work.

@@ -29,7 +29,7 @@ Read [Git identity](../../common/references/git-identity.md) and [Context identi
 
 - Write **new and updated durable ProjectMemory note prose in English**, regardless of conversation language. Keep code, paths, symbols, literal error messages, and relevant quotations exact. Do not bulk-translate historical files automatically.
 - Record lasting confirmed facts with evidence and rationale. Useful hypotheses may be retained when explicitly labeled provisional. Do not silently rewrite an accepted decision or present a proposal as approved.
-- Respect each user's existing organization. If no preference is given, favor small coherent topic-oriented Markdown files rather than one large transcript. Do not mandate `PLAN.md`, ADRs, folders, frontmatter, or title metadata.
+- Respect each user's existing organization. If no preference is given, favor small coherent topic-oriented Markdown files rather than one large transcript. Do not mandate planning documents, ADRs, folders, frontmatter, or title metadata.
 - Search before `create_memory` to avoid duplicates. If updating an existing note, obtain its **complete content and `content_hash`** through `read_memory`; prepare the full replacement and pass that hash in `expected_content_hash`. There is **no mandatory second immediate read** because the server performs whole-raw-file SHA-256 CAS.
 - For `CONFLICT`, reread and reconcile the actual competing changes. Never overwrite blindly. Deleting a note needs a current hash **and explicit user approval**. Check results before reporting success, and read back when the outcome is uncertain.
 - See [Notes](../../common/references/notes.md), [Note conventions](../../common/references/note-conventions.md), and [Safety](../../common/references/safety.md).

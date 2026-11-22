@@ -1,4 +1,4 @@
-# Searching ProjectMemory (D-028)
+# Searching ProjectMemory
 
 ## Contents
 
