@@ -320,10 +320,38 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
                 Assert.IsFalse(Directory.Exists($"/proc/{parent}"), "Direct child must have been reaped.");
                 var child = (await File.ReadAllTextAsync(marker)).Trim();
                 var stat = $"/proc/{child}/stat";
-                if (File.Exists(stat))
+                // WaitForExitAsync reaps the direct child, not its asynchronously terminated descendants.
+                var exited = false;
+                var state = '?';
+                for (var attempt = 0; attempt < 120; attempt++)
                 {
-                    Assert.AreEqual('Z', File.ReadAllText(stat).Split(' ')[2][0], "Descendant must no longer be running.");
+                    try
+                    {
+                        var snapshot = await File.ReadAllTextAsync(stat);
+                        var stateIndex = snapshot.LastIndexOf(')') + 2;
+                        Assert.IsTrue(stateIndex > 1 && stateIndex < snapshot.Length, "Invalid /proc stat format.");
+                        state = snapshot[stateIndex];
+                        if (state is 'Z' or 'X' or 'x')
+                        {
+                            exited = true;
+                            break;
+                        }
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        exited = true;
+                        break;
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        exited = true;
+                        break;
+                    }
+
+                    await Task.Delay(25);
                 }
+
+                Assert.IsTrue(exited, $"Descendant {child} is still running (state {state}) after the bounded reaping wait.");
             }
 
             Assert.IsTrue((await projects.BindAsync("chat:after-timeout", id)).Ok);
