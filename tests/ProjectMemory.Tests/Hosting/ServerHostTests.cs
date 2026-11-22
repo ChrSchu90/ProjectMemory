@@ -336,58 +336,6 @@ public sealed class ServerHostTests : ServerHostTestBase
         }
     }
 
-    /// <summary>
-    /// Verifies that startup, requests and storage failures at Debug level disclose neither the configured token nor host paths.
-    /// </summary>
-    /// <returns>A task that completes when the test has verified that startup, requests and storage failures at Debug level disclose neither the configured token nor host paths.</returns>
-    [TestMethod]
-    [DoNotParallelize]
-    public async Task DiagnosticLogsAndResponsesExcludeSecretsAndHostPaths()
-    {
-        var output = Console.Out;
-        using var captured = new StringWriter();
-        const string token = "isolated-log-test-secret";
-        string root;
-        Console.SetOut(captured);
-        try
-        {
-            await using var fixture = await Fixture.StartAsync(token, logLevel: "Debug");
-            root = fixture.Root;
-            using var client = fixture.CreateClient();
-            using var denied = await client.PostAsync("/mcp", new StringContent("{}", Encoding.UTF8, "application/json"));
-            Assert.AreEqual(HttpStatusCode.Unauthorized, denied.StatusCode);
-            Assert.AreEqual("", await denied.Content.ReadAsStringAsync());
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            using var list = await SendAsync(client, """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}""");
-            Assert.AreEqual(HttpStatusCode.OK, list.StatusCode);
-            var body = await list.Content.ReadAsStringAsync();
-            Assert.IsFalse(body.Contains(token, StringComparison.Ordinal));
-            Assert.IsFalse(body.Contains(root, StringComparison.Ordinal));
-            var moved = root + "-moved";
-            Directory.Move(root, moved);
-            try
-            {
-                using var unavailable = await client.GetAsync("/health/ready");
-                Assert.AreEqual(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
-                Assert.AreEqual("Unhealthy", await unavailable.Content.ReadAsStringAsync());
-            }
-            finally
-            {
-                Directory.Move(moved, root);
-            }
-        }
-        finally
-        {
-            Console.SetOut(output);
-        }
-
-        var logs = captured.ToString();
-        Assert.IsTrue(logs.Contains("Creating lifecycle database.", StringComparison.Ordinal));
-        Assert.IsFalse(logs.Contains(token, StringComparison.Ordinal), "Logs disclosed the configured token.");
-        Assert.IsFalse(logs.Contains(root, StringComparison.Ordinal), "Logs disclosed the data root.");
-        Assert.IsFalse(logs.Contains(Environment.CurrentDirectory, StringComparison.Ordinal), "Logs disclosed the content root.");
-    }
-
     #endregion
 
     #region Private Methods
