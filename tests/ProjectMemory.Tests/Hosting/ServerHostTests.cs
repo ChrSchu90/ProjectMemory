@@ -10,11 +10,11 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using ProjectMemory.Database;
 using ProjectMemory.Hosting;
 using ProjectMemory.Search;
 using Serilog.Core;
@@ -284,7 +284,7 @@ public sealed class ServerHostTests : ServerHostTestBase
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
             Directory.Delete(root, true);
         }
     }
@@ -329,7 +329,7 @@ public sealed class ServerHostTests : ServerHostTestBase
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
             Directory.Delete(root, true);
         }
     }
@@ -356,7 +356,7 @@ public sealed class ServerHostTests : ServerHostTestBase
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
             Directory.Delete(root, true);
         }
     }

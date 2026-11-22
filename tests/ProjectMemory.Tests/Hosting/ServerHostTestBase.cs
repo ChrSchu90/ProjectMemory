@@ -14,11 +14,11 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Configuration;
+using ProjectMemory.Database;
 using ProjectMemory.Hosting;
 
 /// <summary>
@@ -286,7 +286,7 @@ public abstract class ServerHostTestBase
         {
             await app.StopAsync();
             await app.DisposeAsync();
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
             if (ownsRoot)
             {
                 Directory.Delete(root, true);

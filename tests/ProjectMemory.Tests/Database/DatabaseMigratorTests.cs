@@ -49,7 +49,7 @@ public sealed class DatabaseMigratorTests
     [TestCleanup]
     public void Cleanup()
     {
-        SqliteConnection.ClearAllPools();
+        ContextOptions.ClearPool(Path.Combine(_testRoot, "ProjectMemory.db"));
 
         if (Directory.Exists(_testRoot))
         {

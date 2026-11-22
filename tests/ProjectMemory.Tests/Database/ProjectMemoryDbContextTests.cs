@@ -1,5 +1,6 @@
 namespace ProjectMemory.Tests.Database;
 
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System;
@@ -97,7 +98,7 @@ public sealed class ProjectMemoryDbContextTests
                 """);
         }
 
-        SqliteConnection.ClearAllPools();
+        ContextOptions.ClearPool(Path.Combine(fixture.Root, "ProjectMemory.db"));
         await fixture.Services.MigrateDatabaseAsync();
         await using var current = fixture.CreateContext();
         var row = await current.RoutingProjects.SingleAsync();

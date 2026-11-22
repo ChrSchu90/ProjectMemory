@@ -3,7 +3,6 @@ namespace ProjectMemory.Tests.Database;
 using System.IO;
 using System.Threading.Tasks;
 using System;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ProjectMemory.Configuration;
@@ -117,7 +116,7 @@ internal sealed class DatabaseFixture(string root, ServiceProvider services) : I
     public async ValueTask DisposeAsync()
     {
         await Services.DisposeAsync();
-        SqliteConnection.ClearAllPools();
+        ContextOptions.ClearPool(Path.Combine(Root, "ProjectMemory.db"));
         Directory.Delete(Root, recursive: true);
     }
 

@@ -133,7 +133,7 @@ internal sealed class DatabaseMigrator
             await ApplyAndValidateMigrationsAsync(_paths.MigrationPath, cancellationToken).ConfigureAwait(false);
             await SwitchToStandaloneJournalAsync(_paths.MigrationPath, cancellationToken).ConfigureAwait(false);
             EnsureNoSidecars(_paths.MigrationPath);
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(_paths.DatabasePath);
             File.Move(_paths.MigrationPath, _paths.DatabasePath);
         }
         catch
@@ -256,7 +256,7 @@ internal sealed class DatabaseMigrator
         // Do not touch the active DB until the saved snapshot has passed every check.
         await ValidateStandaloneBackupAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        SqliteConnection.ClearAllPools();
+        ContextOptions.ClearPool(_paths.DatabasePath);
 
         // Only the interrupted active database is discarded. Its WAL/journal belong to that
         // discarded generation and must not be paired with the restored snapshot.
@@ -284,7 +284,7 @@ internal sealed class DatabaseMigrator
 
     private void CompleteMigration()
     {
-        SqliteConnection.ClearAllPools();
+        ContextOptions.ClearPool(_paths.DatabasePath);
         File.Delete(_paths.MigrationLockPath);
     }
 
@@ -310,7 +310,7 @@ internal sealed class DatabaseMigrator
     {
         try
         {
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(_paths.DatabasePath);
             DeleteStagingArtifacts();
         }
         catch (Exception exception)

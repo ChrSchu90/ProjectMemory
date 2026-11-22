@@ -54,13 +54,27 @@ internal static class ContextOptions
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
 
-        var connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = pooling }.ToString();
+        var connectionString = CreateConnectionString(databasePath, pooling);
         optionsBuilder.UseSqlite(connectionString);
+    }
+
+    /// <summary>
+    /// Clears only the pool for one managed registry database, leaving other databases unaffected.
+    /// </summary>
+    /// <param name="databasePath">The database whose pooled connections should be cleared.</param>
+    public static void ClearPool(string databasePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        using var connection = new SqliteConnection(CreateConnectionString(databasePath, pooling: true));
+        SqliteConnection.ClearPool(connection);
     }
 
     #endregion
 
     #region Private Methods
+
+    private static string CreateConnectionString(string databasePath, bool pooling)
+        => new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = pooling }.ToString();
 
     #endregion
 }

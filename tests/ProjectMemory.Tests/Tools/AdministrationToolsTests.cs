@@ -6,12 +6,12 @@ using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ModelContextProtocol.Protocol;
+using ProjectMemory.Database;
 using ProjectMemory.Project;
 using ProjectMemory.Tests.Database;
 using ProjectMemory.Tests.Hosting;
@@ -306,7 +306,7 @@ public sealed class AdministrationToolsTests : ServerHostTestBase
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
             Directory.Delete(root, true);
         }
     }
