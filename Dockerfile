@@ -31,17 +31,25 @@ RUN dotnet publish \
 
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS final
 
+ARG RIPGREP_VERSION=15.2.0
+
+# Install required tools, dotnet dependencies etc.
 RUN apk add --upgrade --no-cache \
         ca-certificates-bundle \
         curl \
         libgcc \
         libssl3 \
         libstdc++ \
-        ripgrep \
         zlib \
-    && /usr/bin/rg --pcre2-version \
     && mkdir -p /app /data \
     && chmod 0777 /data
+
+# Install specific ripgrep (https://github.com/BurntSushi/ripgrep) version for search
+RUN apk add --no-cache \
+        --repository https://dl-cdn.alpinelinux.org/alpine/edge/community \
+        "ripgrep=${RIPGREP_VERSION}-r0" \
+    && /usr/bin/rg --version \
+    && /usr/bin/rg --pcre2-version
 
 WORKDIR /app
 
