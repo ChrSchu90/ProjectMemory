@@ -56,7 +56,6 @@ public static class PersistenceServiceCollectionExtensions
 
         services.AddSingleton<DatabaseMigrator>();
         services.AddSingleton<IProjectRegistry, EfProjectRegistry>();
-        services.AddSingleton<RoutingManager>();
         services.AddSingleton<ProjectLocks>();
         return services;
     }

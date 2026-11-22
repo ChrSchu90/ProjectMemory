@@ -162,7 +162,7 @@ public sealed class ProjectMemoryDbContextTests
         Assert.AreEqual(ProjectStatus.Archived, (await fixture.Registry.FindByMemoryProjectIdAsync(b.MemoryProjectId))!.Status);
         Assert.AreEqual(a.MemoryProjectId, (await fixture.Registry.FindBindingAsync(DatabaseFixture.ParseContext("chat:Portal")))!.MemoryProjectId);
         Assert.AreEqual(b.MemoryProjectId, (await fixture.Registry.FindBindingAsync(DatabaseFixture.ParseContext("chat:portal")))!.MemoryProjectId);
-        Assert.HasCount(2, await fixture.Registry.ListBindingsAsync());
+        Assert.HasCount(2, await fixture.Registry.ListBindingsPageAsync(null, 0, 10));
     }
 
     #endregion

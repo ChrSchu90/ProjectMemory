@@ -8,12 +8,11 @@ using ProjectMemory.Routing;
 using ProjectMemory.Tools;
 
 /// <summary>
-/// Owns validated project administration without client paths, implicit binding or project fallback.
+/// Owns validated project administration and fail-closed routing without implicit binding or project fallback.
 /// </summary>
 /// <param name="registry">The existing SQLite registry boundary.</param>
-/// <param name="routing">The existing fail-closed route resolver.</param>
 /// <param name="locks">Coordinates changes to project access with memory operations.</param>
-internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager routing, ProjectLocks locks)
+internal sealed class ProjectManager(IProjectRegistry registry, ProjectLocks locks)
 {
     #region Static Fields
 
@@ -164,13 +163,15 @@ internal sealed class ProjectManager(IProjectRegistry registry, RoutingManager r
     {
         if (!ContextId.TryParse(context, out var contextId))
             return AdministrationResponse<ContextResolutionResult>.Failure("INVALID_CONTEXT");
-        var result = await routing.ResolveContextAsync(contextId, cancellationToken).ConfigureAwait(false);
-        return result.Status switch
-        {
-            ContextResolutionStatus.Resolved => AdministrationResponse<ContextResolutionResult>.Success(new ContextResolutionResult(contextId.ToString(), result.MemoryProjectId!.Value, result.MemoryProjectName!)),
-            ContextResolutionStatus.ProjectRoutingInactive => AdministrationResponse<ContextResolutionResult>.Failure("PROJECT_ARCHIVED"),
-            _ => AdministrationResponse<ContextResolutionResult>.Failure("CONTEXT_UNBOUND")
-        };
+        var route = await registry.FindRouteAsync(contextId, cancellationToken).ConfigureAwait(false);
+        if (route is null)
+            return AdministrationResponse<ContextResolutionResult>.Failure("CONTEXT_UNBOUND");
+        if (route.ProjectRoutingStatus != ProjectStatus.Active)
+            return AdministrationResponse<ContextResolutionResult>.Failure("PROJECT_ARCHIVED");
+        if (route.BindingStatus != Status.Active)
+            return AdministrationResponse<ContextResolutionResult>.Failure("CONTEXT_UNBOUND");
+
+        return AdministrationResponse<ContextResolutionResult>.Success(new ContextResolutionResult(contextId.ToString(), route.MemoryProjectId, route.MemoryProjectName));
     }
 
     /// <summary>
