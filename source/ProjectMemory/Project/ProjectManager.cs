@@ -195,7 +195,8 @@ internal sealed class ProjectManager(IProjectRegistry registry, ProjectLocks loc
         RegistryError.ProjectNotFound => "PROJECT_NOT_FOUND",
         RegistryError.ProjectBlocked => "PROJECT_BLOCKED",
         RegistryError.ProjectArchived => "PROJECT_ARCHIVED",
-        _ => "CONFLICT"
+        RegistryError.Conflict => "CONFLICT",
+        _ => throw new ArgumentOutOfRangeException(nameof(error), error, null)
     });
 
     #endregion

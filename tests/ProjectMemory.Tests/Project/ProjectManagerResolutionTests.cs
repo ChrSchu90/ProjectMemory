@@ -162,17 +162,52 @@ public sealed class ProjectManagerResolutionTests
         Assert.AreEqual("CONTEXT_UNBOUND", result.Error!.Code);
     }
 
+    /// <summary>
+    /// Verifies that every defined registry error retains its established administration code.
+    /// </summary>
+    /// <param name="error">The registry error returned by a rejected binding.</param>
+    /// <param name="expectedCode">The corresponding stable administration error code.</param>
+    /// <returns>A task that completes after checking the error mapping.</returns>
+    [TestMethod]
+    [DataRow(RegistryError.ProjectNotFound, "PROJECT_NOT_FOUND")]
+    [DataRow(RegistryError.ProjectBlocked, "PROJECT_BLOCKED")]
+    [DataRow(RegistryError.ProjectArchived, "PROJECT_ARCHIVED")]
+    [DataRow(RegistryError.Conflict, "CONFLICT")]
+    public async Task BindAsyncMapsKnownRegistryErrors(RegistryError error, string expectedCode)
+    {
+        var manager = CreateManager(null, error);
+
+        var result = await manager.BindAsync(TestContext, Guid.NewGuid().ToString("D"));
+
+        Assert.IsFalse(result.Ok);
+        Assert.AreEqual(expectedCode, result.Error!.Code);
+    }
+
+    /// <summary>
+    /// Verifies that an unrecognized registry error fails explicitly instead of masquerading as a conflict.
+    /// </summary>
+    /// <returns>A task that completes after checking the unsupported error.</returns>
+    [TestMethod]
+    public async Task BindAsyncRejectsUnknownRegistryError()
+    {
+        var manager = CreateManager(null, (RegistryError)int.MaxValue);
+
+        await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
+            () => manager.BindAsync(TestContext, Guid.NewGuid().ToString("D")));
+    }
+
     #endregion
 
     #region Private Methods
 
-    private static ProjectManager CreateManager(ProjectRoute? route) => new(new StubProjectRegistry((_, _) => Task.FromResult<ProjectRoute?>(route)), new ProjectLocks());
+    private static ProjectManager CreateManager(ProjectRoute? route, RegistryError? bindError = null) =>
+        new(new StubProjectRegistry((_, _) => Task.FromResult<ProjectRoute?>(route), bindError), new ProjectLocks());
 
     #endregion
 
     #region Test Classes
 
-    private sealed class StubProjectRegistry(Func<ContextId, CancellationToken, Task<ProjectRoute?>> findRoute) : IProjectRegistry
+    private sealed class StubProjectRegistry(Func<ContextId, CancellationToken, Task<ProjectRoute?>> findRoute, RegistryError? bindError = null) : IProjectRegistry
     {
         #region Static Fields
 
@@ -214,7 +249,8 @@ public sealed class ProjectManagerResolutionTests
         public Task<IReadOnlyList<ContextBinding>> ListBindingsPageAsync(Guid? projectId, int offset, int limit, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         /// <inheritdoc />
-        public Task<RegistryChange<ContextBinding>> BindAsync(ContextId contextId, Guid projectId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<RegistryChange<ContextBinding>> BindAsync(ContextId contextId, Guid projectId, CancellationToken cancellationToken = default) =>
+            bindError is { } error ? Task.FromResult(new RegistryChange<ContextBinding>(null, Error: error)) : throw new NotSupportedException();
 
         /// <inheritdoc />
         public Task<RegistryChange<ProjectRouting>> SetProjectStatusAsync(Guid projectId, ProjectStatus status, CancellationToken cancellationToken = default) => throw new NotSupportedException();

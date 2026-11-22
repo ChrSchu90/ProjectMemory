@@ -476,6 +476,74 @@ public sealed class MemoryToolsTests : ServerHostTestBase
     }
 
     /// <summary>
+    /// Verifies that failed startup deletion replay keeps its project blocked while other projects remain usable,
+    /// and that a later restart can finish the persisted deletion.
+    /// </summary>
+    /// <returns>The asynchronous recovery and access-isolation verification.</returns>
+    [TestMethod]
+    public async Task FailedDeletionReplayKeepsProjectBlockedAndOtherProjectsAvailable()
+    {
+        var root = Fixture.CreateRoot();
+        const string healthyContext = "local:healthy";
+        const string deletingContext = "local:pending";
+        try
+        {
+            string pendingId;
+            await using (var host = await StartWithCheckpointAsync(point =>
+            {
+                if (point == LifecycleCheckpoint.IntentCommitted)
+                    throw new IOException("interrupt initial deletion after durable intent");
+            }, root, false))
+            {
+                using var client = host.CreateClient();
+                pendingId = await ProjectAsync(client, deletingContext);
+                await ProjectAsync(client, healthyContext);
+                await CreateAsync(client, deletingContext, "pending content");
+                await CreateAsync(client, healthyContext, "healthy content");
+                await CallToolAsync(client, "delete_project", new { project_id = pendingId }, error: "RECOVERY_REQUIRED");
+            }
+
+            Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1 AND Status='Archived'"));
+
+            await using (var replay = await StartWithCheckpointAsync(point =>
+            {
+                if (point == LifecycleCheckpoint.Quarantined)
+                    throw new IOException("interrupt startup deletion replay");
+            }, root, false))
+            {
+                using var client = replay.CreateClient();
+                var healthy = await CallToolAsync(client, "read_memory", new { context_id = healthyContext, path = Note });
+                Assert.AreEqual("healthy content", healthy.GetProperty("data").GetProperty("content").GetString());
+                await CallToolAsync(client, "read_memory", new { context_id = deletingContext, path = Note }, error: "PROJECT_ARCHIVED");
+                await CallToolAsync(client, "resolve_context", new { context_id = deletingContext }, error: "PROJECT_ARCHIVED");
+                await CallToolAsync(client, "reactivate_project", new { project_id = pendingId }, error: "PROJECT_BLOCKED");
+                await CallToolAsync(client, "unbind_context", new { context_id = deletingContext }, error: "PROJECT_BLOCKED");
+                await CallToolAsync(client, "bind_context", new { context_id = "local:replacement", project_id = pendingId }, error: "PROJECT_BLOCKED");
+
+                Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1 AND Status='Archived'"));
+                Assert.AreEqual(2L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
+                Assert.IsTrue(Directory.Exists(Path.Combine(root, "quarantine", pendingId)));
+            }
+
+            await using (var recovered = await Fixture.StartAsync(root: root, ownsRoot: false))
+            {
+                using var client = recovered.CreateClient();
+                await CallToolAsync(client, "delete_project", new { project_id = pendingId }, error: "PROJECT_NOT_FOUND");
+                await CallToolAsync(client, "resolve_context", new { context_id = deletingContext }, error: "CONTEXT_UNBOUND");
+                var healthy = await CallToolAsync(client, "read_memory", new { context_id = healthyContext, path = Note });
+                Assert.AreEqual("healthy content", healthy.GetProperty("data").GetProperty("content").GetString());
+                Assert.AreEqual(0L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1"));
+                Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
+                Assert.IsFalse(Directory.Exists(Path.Combine(root, "quarantine", pendingId)));
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    /// <summary>
     /// Verifies that an obsolete resolved route cannot authorize access after archive, rebind or deletion.
     /// </summary>
     /// <param name="operation">The intervening registry change.</param>
