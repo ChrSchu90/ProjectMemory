@@ -80,11 +80,11 @@ public sealed class ProjectMemoryDbContextTests
     }
 
     /// <summary>
-    /// Verifies that upgrading a populated M2 registry preserves exact bindings, IDs and lifecycle states.
+    /// Verifies that upgrading a populated registry preserves exact bindings, IDs and lifecycle states.
     /// </summary>
     /// <returns>The asynchronous migration verification.</returns>
     [TestMethod]
-    public async Task UpgradeM2RetainsProjectsAndBindings()
+    public async Task UpgradeRetainsProjectsAndBindings()
     {
         await using var fixture = await DatabaseFixture.CreateAsync(migrate: false);
         var id = Guid.NewGuid();

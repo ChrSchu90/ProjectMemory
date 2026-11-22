@@ -10,7 +10,7 @@ using ProjectMemory.Tools;
 /// <summary>
 /// Authorizes each file operation under the same project lock as archive, unbind and deletion.
 /// </summary>
-/// <param name="projects">The exact M2 resolver.</param>
+/// <param name="projects">The exact project resolver.</param>
 /// <param name="locks">The service's project locks.</param>
 /// <param name="checkpoint">Optional observer for coordination tests.</param>
 internal sealed class MemoryManager(ProjectManager projects, ProjectLocks locks, Action<LifecycleCheckpoint>? checkpoint = null)

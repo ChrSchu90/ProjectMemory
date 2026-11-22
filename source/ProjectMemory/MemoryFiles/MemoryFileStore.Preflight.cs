@@ -51,6 +51,9 @@ internal sealed partial class MemoryFileStore
             }
         }
 
+        if (Attributes(database.MigrationLockPath)?.HasFlag(FileAttributes.Directory) == true)
+            throw new MemoryFileException("UNSAFE_PATH");
+
         var visited = 0;
         var projects = InspectRoot("projects");
         var quarantine = InspectRoot("quarantine");
