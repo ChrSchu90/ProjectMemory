@@ -1,0 +1,9 @@
+interface:
+  display_name: Project Memory
+  short_description: Retrieve and maintain reliable shared project notes.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+    - chatgpt
+  allow_implicit_invocation: true
