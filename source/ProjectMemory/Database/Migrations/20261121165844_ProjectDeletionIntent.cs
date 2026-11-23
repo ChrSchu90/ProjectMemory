@@ -3,7 +3,7 @@ namespace ProjectMemory.Database.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 /// <summary>
-/// Records durable project deletion intent without rewriting the existing M2 rows.
+/// Adds a durable deletion-intent flag to existing project routing records.
 /// </summary>
 public partial class ProjectDeletionIntent : Migration
 {
@@ -39,7 +39,7 @@ public partial class ProjectDeletionIntent : Migration
     /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        // M2 cannot recognize a pending deletion. Abort before discarding its durable block.
+        // The previous schema cannot represent pending deletion. Block the downgrade while any intent remains.
         migrationBuilder.Sql("""
             CREATE TEMP TABLE CheckDeletionIntents (Pending INTEGER CHECK (Pending = 0));
             INSERT INTO CheckDeletionIntents SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending;

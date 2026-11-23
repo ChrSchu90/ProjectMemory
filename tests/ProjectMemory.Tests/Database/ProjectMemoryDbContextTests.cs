@@ -1,9 +1,9 @@
 namespace ProjectMemory.Tests.Database;
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using System;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -13,7 +13,7 @@ using ProjectMemory.Database;
 using ProjectMemory.Routing;
 
 /// <summary>
-/// Tests the <see cref="ProjectMemoryDbContext"/> model, initial schema, persisted enum values and constraints.
+/// Tests the <see cref="ProjectMemoryDbContext"/> model, migration compatibility, persisted enum values and constraints.
 /// </summary>
 [TestClass]
 public sealed class ProjectMemoryDbContextTests
@@ -39,7 +39,7 @@ public sealed class ProjectMemoryDbContextTests
     /// <summary>
     /// Verifies that the current EF Core model matches the latest migration and has no pending model changes.
     /// </summary>
-    /// <returns>A task that completes when the context model is verified against the initial migration.</returns>
+    /// <returns>A task that completes when the context model is verified against the latest migration.</returns>
     [TestMethod]
     public async Task NoPendingChanges()
     {
@@ -49,11 +49,11 @@ public sealed class ProjectMemoryDbContextTests
     }
 
     /// <summary>
-    /// Verifies that the migrated schema persists project identities, framework enum names and exact bindings.
+    /// Verifies that the current schema persists project identities, framework enum names and exact bindings.
     /// </summary>
-    /// <returns>A task that completes when the initial schema, stored statuses and unchanged registry identities are verified.</returns>
+    /// <returns>A task that completes when the current schema, stored statuses and unchanged registry identities are verified.</returns>
     [TestMethod]
-    public async Task InitialSchemaPersistsProjectsAndBindings()
+    public async Task CurrentSchemaPersistsProjectsAndBindings()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var a = await fixture.CreateProjectAsync("a");
@@ -73,9 +73,9 @@ public sealed class ProjectMemoryDbContextTests
         CollectionAssert.AreEqual(new[] { "Active", "Archived" }, statuses);
 
         var applied = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.HasCount(2, applied);
-        Assert.IsTrue(applied[1].EndsWith("_ProjectDeletionIntent", StringComparison.Ordinal));
-        Assert.IsTrue(applied[0].EndsWith("_InitialCreate", StringComparison.Ordinal));
+        var available = context.Database.GetMigrations().ToArray();
+        Assert.IsNotEmpty(available);
+        CollectionAssert.AreEqual(available, applied);
         var sql = await context.Database.SqlQueryRaw<string>("SELECT sql AS Value FROM sqlite_master WHERE name = 'ContextBindings'").SingleAsync();
         Assert.IsTrue(sql.Contains("BINARY", StringComparison.Ordinal));
     }
@@ -118,14 +118,19 @@ public sealed class ProjectMemoryDbContextTests
     [TestMethod]
     public async Task DowngradePreservesPendingIntent()
     {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        await fixture.CreateProjectAsync("pending");
+        await using var fixture = await DatabaseFixture.CreateAsync(migrate: false);
         await using var db = fixture.CreateContext();
-        await db.Database.ExecuteSqlRawAsync("UPDATE ProjectRoutings SET DeletionPending=1, Status='Archived'");
         var migrator = db.GetService<IMigrator>();
+        await migrator.MigrateAsync("20261121165844_ProjectDeletionIntent");
+        await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO ProjectRoutings (MemoryProjectId, MemoryProjectName, Status, CreatedAt, UpdatedAt, DeletionPending)
+            VALUES ('00000000-0000-0000-0000-000000000001', 'pending', 'Archived', 0, 0, 1)
+            """);
+
+        var appliedBefore = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         await Assert.ThrowsAsync<SqliteException>(() => migrator.MigrateAsync("20261121154345_InitialCreate"));
-        Assert.IsTrue((await db.RoutingProjects.SingleAsync()).DeletionPending);
-        Assert.HasCount(2, (await db.Database.GetAppliedMigrationsAsync()).ToArray());
+        Assert.AreEqual(1L, await db.Database.SqlQueryRaw<long>("SELECT DeletionPending AS Value FROM ProjectRoutings").SingleAsync());
+        CollectionAssert.AreEqual(appliedBefore, (await db.Database.GetAppliedMigrationsAsync()).ToArray());
     }
 
     /// <summary>
