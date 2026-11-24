@@ -12,6 +12,7 @@
   <Folder Name="/Github Items/">
     <File Path=".github/dependabot.yml" />
     <File Path=".github/workflows/build.yml" />
+    <File Path=".github/workflows/update-dependencies.yml" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
