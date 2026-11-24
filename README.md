@@ -1,6 +1,6 @@
 # 🧠 Project Memory MCP
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![GHCR](https://img.shields.io/badge/GHCR-project--memory--blue?logo=github)](https://github.com/ChrSchu90/ProjectMemory/pkgs/container/project-memory) [![Build](https://github.com/ChrSchu90/ProjectMemory/actions/workflows/build.yml/badge.svg)](https://github.com/ChrSchu90/ProjectMemory/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![GHCR](https://img.shields.io/badge/GHCR-project--memory-blue?logo=github)](https://github.com/ChrSchu90/ProjectMemory/pkgs/container/project-memory) [![Build](https://github.com/ChrSchu90/ProjectMemory/actions/workflows/build.yml/badge.svg)](https://github.com/ChrSchu90/ProjectMemory/actions/workflows/build.yml)
 
 > [!IMPORTANT]
 > ProjectMemory is under active development. 
