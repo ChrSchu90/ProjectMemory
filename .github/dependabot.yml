@@ -9,7 +9,9 @@ updates:
       timezone: "Europe/Berlin"
   
   - package-ecosystem: "nuget"
-    directory: "/source"
+    directory: "/"
+    exclude-paths:
+      - "tests/**"
     schedule:
       interval: "weekly"
       day: "friday"
