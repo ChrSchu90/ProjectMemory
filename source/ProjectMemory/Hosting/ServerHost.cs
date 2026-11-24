@@ -7,7 +7,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
@@ -129,11 +128,11 @@ internal static class ServerHost
             // Validate configuration and storage before initializing the database.
             _ = app.Services.GetRequiredService<IOptions<ProjectMemoryOptions>>().Value;
             var stopping = app.Lifetime.ApplicationStopping;
-            await RipgrepSearchService.VerifyBinaryAsync(stopping);
+            await app.Services.GetRequiredService<RipgrepSearchService>().VerifyBinaryAsync(stopping);
             var inventory = app.Services.GetRequiredService<MemoryFileStore>()
                 .Preflight(app.Services.GetRequiredService<DatabasePaths>(), stopping);
             var storage = app.Services.GetRequiredService<DataRootHealthCheck>();
-            if ((await storage.CheckHealthAsync(new HealthCheckContext())).Status != HealthStatus.Healthy)
+            if ((await storage.CheckHealthAsync(new HealthCheckContext(), stopping)).Status != HealthStatus.Healthy)
                 throw new InvalidOperationException("Data storage is unavailable.");
 
             // Complete database initialization before the MCP endpoint can accept requests.

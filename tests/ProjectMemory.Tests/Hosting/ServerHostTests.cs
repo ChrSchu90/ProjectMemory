@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -209,6 +208,11 @@ public sealed class ServerHostTests : ServerHostTestBase
     [TestMethod]
     public async Task ReadinessTracksStorageAvailability()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Moving a directory containing an open SQLite database is not supported by Windows file sharing.");
+        }
+
         await using var fixture = await Fixture.StartAsync();
         using var client = fixture.CreateClient();
         using var ready = await client.GetAsync("/health/ready");
@@ -278,9 +282,11 @@ public sealed class ServerHostTests : ServerHostTestBase
             var original = await File.ReadAllBytesAsync(Path.Combine(root, "ProjectMemory.db"));
             await using (var second = await Fixture.StartAsync(root: root, ownsRoot: false))
             {
-                CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "ProjectMemory.db")));
                 Assert.AreEqual("persistent data", await File.ReadAllTextAsync(Path.Combine(root, "sentinel.md")));
             }
+
+            // Compare raw SQLite bytes only when the server has fully stopped.
+            CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "ProjectMemory.db")));
         }
         finally
         {

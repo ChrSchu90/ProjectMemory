@@ -112,9 +112,9 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         {
             writing.SetResult();
             return writer.Task;
-        }, default);
+        }, CancellationToken.None);
         var last = locks.RunAsync(id, ProjectAccess.Read, () => Task.FromResult(3), default);
-        cancelled.Cancel();
+        await cancelled.CancelAsync();
         await Assert.ThrowsAsync<OperationCanceledException>(() => abandoned);
         Assert.IsFalse(writing.Task.IsCompleted);
         Assert.IsFalse(last.IsCompleted);
@@ -219,7 +219,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         }
 
         await CallToolAsync(client, tool, NavigationArguments(tool, "local:"), error: "INVALID_CONTEXT");
-        await CallToolAsync(client, tool, tool == "list_memories" ? new { } : (object)new { query = "needle" }, error: "INVALID_CONTEXT");
+        await CallToolAsync(client, tool, tool == "list_memories" ? new { } : new { query = "needle" }, error: "INVALID_CONTEXT");
         await CallToolAsync(client, "archive_project", new { project_id = first });
         await CallToolAsync(client, tool, NavigationArguments(tool, "local:Work"), error: "PROJECT_ARCHIVED");
     }
@@ -302,7 +302,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         var created = await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "first" });
         Assert.AreEqual(Hash("first"u8.ToArray()), HashFrom(created));
         await CallToolAsync(client, "create_memory", new { args.context_id, args.path, content = "other" }, error: "ALREADY_EXISTS");
-        Assert.AreEqual("first", File.ReadAllText(file));
+        Assert.AreEqual("first", await File.ReadAllTextAsync(file));
         await CallToolAsync(client, "read_memory", new { context_id = "chat:alpha", path = Note }, error: "MEMORY_NOT_FOUND");
         await CallToolAsync(client, "read_memory", new { context_id = "chat:ALPHA", path = Note }, error: "CONTEXT_UNBOUND");
         await CallToolAsync(client, "read_memory", new { context_id = "CHAT:Alpha", path = Note }, error: "INVALID_CONTEXT");
@@ -447,7 +447,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
             await using var restarted = await Fixture.StartAsync(root: restored, ownsRoot: false);
             using var recovered = restarted.CreateClient();
             Assert.IsTrue(Directory.Exists(Path.Combine(restored, "operator", "empty")));
-            CollectionAssert.AreEqual(new byte[] { 0, 255 }, File.ReadAllBytes(Path.Combine(restored, "operator", ".marker")));
+            CollectionAssert.AreEqual(new byte[] { 0, 255 }, await File.ReadAllBytesAsync(Path.Combine(restored, "operator", ".marker")));
             var active = await CallToolAsync(recovered, "resolve_context", new { context_id = Context });
             Assert.AreEqual(keep, active.GetProperty("data").GetProperty("project_id").GetString());
             await CallToolAsync(recovered, "resolve_context", new { context_id = "chat:ALPHA" }, error: "CONTEXT_UNBOUND");
@@ -661,7 +661,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
 
             var failure = await Assert.ThrowsExactlyAsync<MemoryFileException>(() => Fixture.StartAsync(root: root, ownsRoot: false));
             Assert.AreEqual("UNSAFE_PATH", failure.Code);
-            Assert.AreEqual("doomed", File.ReadAllText(Path.Combine(root, "projects", id, Note)));
+            Assert.AreEqual("doomed", await File.ReadAllTextAsync(Path.Combine(root, "projects", id, Note)));
             Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1"));
             Assert.AreEqual(2L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
         }
@@ -692,9 +692,9 @@ public sealed class MemoryToolsTests : ServerHostTestBase
 
             var tree = Directory.CreateDirectory(Path.Combine(root, "projects", project)).FullName;
             File.Move(Path.Combine(tree, Note), Path.Combine(tree, "new.md"));
-            foreach (var name in new[] { ".pm-leftover", "manual.txt", "upper.MD", "invalid?.md", "new.md" })
+            foreach (var name in new[] { ".pm-leftover", "manual.txt", "upper.MD", "invalid!.md", "new.md" })
             {
-                File.WriteAllText(Path.Combine(tree, name), "offline");
+                await File.WriteAllTextAsync(Path.Combine(tree, name), "offline");
             }
 
             await using var restarted = await Fixture.StartAsync(root: root, ownsRoot: false);
@@ -728,7 +728,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         try
         {
             var outside = Path.Combine(sentinel, "outside.md");
-            File.WriteAllText(outside, "preserve");
+            await File.WriteAllTextAsync(outside, "preserve");
             string id;
             await using (var host = await Fixture.StartAsync(root: root, ownsRoot: false))
             {
@@ -744,7 +744,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
             Assert.AreEqual("UNSAFE_PATH", failure.Code);
             Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ProjectRoutings WHERE DeletionPending=1 AND Status='Archived'"));
             Assert.AreEqual(1L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
-            Assert.AreEqual("preserve", File.ReadAllText(outside));
+            Assert.AreEqual("preserve", await File.ReadAllTextAsync(outside));
 
             // The operator inspects and removes only the offending link while stopped.
             File.Delete(Path.Combine(root, "quarantine", id, "unsafe.md"));
@@ -753,7 +753,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
             await CallToolAsync(recovered, "delete_project", new { project_id = id }, error: "PROJECT_NOT_FOUND");
             Assert.AreEqual(0L, Scalar(root, "SELECT COUNT(*) FROM ContextBindings"));
             Assert.IsFalse(Directory.Exists(Path.Combine(root, "quarantine", id)));
-            Assert.AreEqual("preserve", File.ReadAllText(outside));
+            Assert.AreEqual("preserve", await File.ReadAllTextAsync(outside));
         }
         finally
         {
@@ -790,7 +790,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         {
             if (admin == "archive_project")
                 return (await fixture.Services.GetRequiredService<ProjectManager>().SetProjectStatusAsync(id, ProjectStatus.Archived)).Ok;
-            return (await fixture.Services.GetRequiredService<ProjectDeletion>().DeleteAsync(id, default)).Ok;
+            return (await fixture.Services.GetRequiredService<ProjectDeletion>().DeleteAsync(id, CancellationToken.None)).Ok;
         }
 
         // Both manager entry points reach the project lock before their first database await.
@@ -810,7 +810,7 @@ public sealed class MemoryToolsTests : ServerHostTestBase
         var file = Path.Combine(fixture.Root, "projects", id, Note);
         if (admin == "archive_project")
         {
-            Assert.AreEqual("completed", File.ReadAllText(file));
+            Assert.AreEqual("completed", await File.ReadAllTextAsync(file));
             await CallToolAsync(client, "read_memory", new { context_id = Context, path = Note }, error: "PROJECT_ARCHIVED");
         }
         else

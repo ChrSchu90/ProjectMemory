@@ -20,6 +20,8 @@ internal sealed class RipgrepSearchService : IDisposable
     /// <summary>Strict decoder for the ripgrep JSONL protocol.</summary>
     internal static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
+    internal static readonly Version MinimumRipgrepVersion = new(15, 2, 0);
+
     #endregion
 
     #region Private Fields
@@ -40,14 +42,14 @@ internal sealed class RipgrepSearchService : IDisposable
     /// <param name="manager">Revalidates project authorization under reader admission.</param>
     /// <param name="store">Managed storage boundary.</param>
     public RipgrepSearchService(MemoryManager manager, MemoryFileStore store)
-        : this(manager, store, "/usr/bin/rg", TimeSpan.FromSeconds(10)) { }
+        : this(manager, store, DefaultExecutable(), TimeSpan.FromSeconds(10)) { }
 
     /// <summary>
     /// Creates an adapter with a trusted executable and deadline.
     /// </summary>
     /// <param name="manager">Revalidates project authorization under reader admission.</param>
     /// <param name="store">Managed storage boundary.</param>
-    /// <param name="executable">Trusted executable for isolated process tests.</param>
+    /// <param name="executable">Trusted executable name or path for isolated process tests.</param>
     /// <param name="timeout">Maximum admission and search duration.</param>
     internal RipgrepSearchService(MemoryManager manager, MemoryFileStore store, string executable, TimeSpan timeout)
     {
@@ -97,19 +99,60 @@ internal sealed class RipgrepSearchService : IDisposable
     }
 
     /// <summary>
-    /// Requires executable PCRE2 support before host readiness.
+    /// Uses the installed ripgrep command from the process search path on every platform.
+    /// </summary>
+    /// <returns>The ripgrep executable name.</returns>
+    internal static string DefaultExecutable() => "rg";
+
+    /// <summary>
+    /// Checks that the installed ripgrep version meets the supported minimum.
+    /// </summary>
+    /// <param name="line">The first version line from ripgrep.</param>
+    /// <returns>Whether the reported version is supported.</returns>
+    internal static bool SupportsVersion(string line)
+    {
+        if (!line.StartsWith("ripgrep ", StringComparison.Ordinal))
+            return false;
+        var number = line.AsSpan("ripgrep ".Length).Trim();
+        var end = number.IndexOfAny(' ', '\t', '\r');
+        if (end >= 0)
+            number = number[..end];
+        return Version.TryParse(number, out var version) && version != null! && version.CompareTo(MinimumRipgrepVersion) >= 0;
+    }
+
+    /// <summary>
+    /// Requires a supported ripgrep version and PCRE2 before host readiness.
     /// </summary>
     /// <param name="token">Startup cancellation.</param>
     /// <returns>The asynchronous capability check.</returns>
-    internal static async Task VerifyBinaryAsync(CancellationToken token)
+    internal async Task VerifyBinaryAsync(CancellationToken token)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
-        var verified = false;
-        var exit = await new RipgrepProcess().RunAsync("/", ["--no-config", "--pcre2-version"], 10,
-            line => verified |= StrictUtf8.GetString(line.Span).StartsWith("PCRE2 ", StringComparison.Ordinal), deadline.Token).ConfigureAwait(false);
-        if (exit != 0 || !verified)
+        var directory = AppContext.BaseDirectory;
+        try
+        {
+            var supported = false;
+            var versionExit = await new RipgrepProcess(_executable).RunAsync(directory, ["--no-config", "--version"], 10,
+                line => supported |= SupportsVersion(StrictUtf8.GetString(line.Span)), deadline.Token).ConfigureAwait(false);
+            if (versionExit != 0 || !supported)
+                throw new MemoryFileException("SEARCH_UNAVAILABLE");
+
+            var verified = false;
+            var pcreExit = await new RipgrepProcess(_executable).RunAsync(directory, ["--no-config", "--pcre2-version"], 10,
+                line => verified |= StrictUtf8.GetString(line.Span).StartsWith("PCRE2 ", StringComparison.Ordinal), deadline.Token).ConfigureAwait(false);
+            if (pcreExit != 0 || !verified)
+                throw new MemoryFileException("SEARCH_UNAVAILABLE");
+        }
+        catch (MemoryFileException error) when (error.Code != "SEARCH_UNAVAILABLE")
+        {
+            // Startup capability failures should all produce the same actionable diagnostic.
             throw new MemoryFileException("SEARCH_UNAVAILABLE");
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new MemoryFileException("SEARCH_UNAVAILABLE");
+        }
     }
 
     /// <summary>
@@ -119,12 +162,12 @@ internal sealed class RipgrepSearchService : IDisposable
     /// <param name="id">Server-owned project ID.</param>
     /// <param name="request">Validated search options.</param>
     /// <param name="token">Search deadline or cancellation.</param>
-    /// <param name="executable">Trusted executable path.</param>
+    /// <param name="executable">Optional trusted executable name or path.</param>
     /// <returns>The complete projected page.</returns>
-    internal static async Task<MemorySearchResult> SearchAsync(MemoryFileStore store, Guid id, SearchRequest request, CancellationToken token, string executable = "/usr/bin/rg")
+    internal static async Task<MemorySearchResult> SearchAsync(MemoryFileStore store, Guid id, SearchRequest request, CancellationToken token, string? executable = null)
     {
         var (directory, paths) = store.SelectSearchFiles(id, request, token);
-        var process = new RipgrepProcess(executable);
+        var process = new RipgrepProcess(executable ?? DefaultExecutable());
         var filters = request.Files;
         var flagsForEmpty = new List<string>();
         if (filters.Include?.Length > 0 || filters.Exclude?.Length > 0)
@@ -203,6 +246,9 @@ internal sealed class RipgrepSearchService : IDisposable
                 string path;
                 try { path = StrictUtf8.GetString(line.Span); }
                 catch (DecoderFallbackException) { return; }
+                // File-list output uses native separators on Windows; selectors always use '/'.
+                if (OperatingSystem.IsWindows())
+                    path = path.Replace('\\', '/');
                 selected.Add(path.StartsWith("./", StringComparison.Ordinal) ? path[2..] : path);
             }, token).ConfigureAwait(false);
             return paths.Where(selected.Contains).ToArray();

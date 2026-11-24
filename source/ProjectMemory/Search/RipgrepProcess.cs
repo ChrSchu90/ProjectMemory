@@ -12,8 +12,8 @@ using System.Threading.Tasks;
 using ProjectMemory.MemoryFiles;
 
 /// <summary>Runs the installed read-only ripgrep with bounded, concurrent pipe readers.</summary>
-/// <param name="executable">Trusted process path, fixed at composition time.</param>
-internal sealed class RipgrepProcess(string executable = "/usr/bin/rg")
+/// <param name="executable">Trusted executable name or path, selected at composition time.</param>
+internal sealed class RipgrepProcess(string executable)
 {
     #region Static Fields
 
@@ -56,7 +56,18 @@ internal sealed class RipgrepProcess(string executable = "/usr/bin/rg")
             RedirectStandardError = true, RedirectStandardInput = true
         };
         start.Environment.Clear();
-        start.Environment["LC_ALL"] = "C";
+        if (OperatingSystem.IsWindows())
+        {
+            // A minimal Windows child environment still needs SystemRoot to find system DLLs.
+            if (Environment.GetEnvironmentVariable("SystemRoot") is { Length: > 0 } systemRoot)
+            {
+                start.Environment["SystemRoot"] = systemRoot;
+            }
+        }
+        else
+        {
+            start.Environment["LC_ALL"] = "C";
+        }
         foreach (var argument in args)
         {
             start.ArgumentList.Add(argument);

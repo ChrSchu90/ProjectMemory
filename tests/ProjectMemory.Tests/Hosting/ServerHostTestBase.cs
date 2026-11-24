@@ -254,6 +254,8 @@ public abstract class ServerHostTestBase
                     await app.DisposeAsync();
                 }
 
+                // A failed host startup can leave SQLite connections in its process pool.
+                ContextOptions.ClearPool(Path.Combine(root, "ProjectMemory.db"));
                 if (ownsRoot)
                 {
                     Directory.Delete(root, true);

@@ -146,17 +146,17 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
             for (var i = 0; i < 120; i++)
             {
                 var dir = Directory.CreateDirectory(Path.Combine(docs, i % 2 == 0 ? "api" : "legacy"));
-                File.WriteAllText(Path.Combine(dir.FullName, $"note-{i:D3}.md"), $"ADR {i:D3}\nAuthorization: token [{i}]\nRésumé\n");
+                await File.WriteAllTextAsync(Path.Combine(dir.FullName, $"note-{i:D3}.md"), $"ADR {i:D3}\nAuthorization: token [{i}]\nRésumé\n");
             }
 
-            File.WriteAllText(Path.Combine(docs, ".ignore"), "legacy/\n");
-            File.WriteAllText(Path.Combine(docs, ".gitignore"), "api/note-000.md\n");
-            File.WriteAllText(Path.Combine(docs, ".rgignore"), "api/note-002.md\n");
-            File.WriteAllText(Path.Combine(docs, ".hidden.md"), "Authorization");
-            File.WriteAllText(Path.Combine(docs, "outside.txt"), "Authorization");
-            File.WriteAllBytes(Path.Combine(docs, "binary.md"), "Authorization\0"u8.ToArray());
+            await File.WriteAllTextAsync(Path.Combine(docs, ".ignore"), "legacy/\n");
+            await File.WriteAllTextAsync(Path.Combine(docs, ".gitignore"), "api/note-000.md\n");
+            await File.WriteAllTextAsync(Path.Combine(docs, ".rgignore"), "api/note-002.md\n");
+            await File.WriteAllTextAsync(Path.Combine(docs, ".hidden.md"), "Authorization");
+            await File.WriteAllTextAsync(Path.Combine(docs, "outside.txt"), "Authorization");
+            await File.WriteAllBytesAsync(Path.Combine(docs, "binary.md"), "Authorization\0"u8.ToArray());
             File.WriteAllBytes(Path.Combine(docs, "invalid.md"), [65, 0xff]);
-            File.WriteAllText(Path.Combine(docs, "large.md"), new string('A', MemoryFileStore.MaximumBytes + 1));
+            await File.WriteAllTextAsync(Path.Combine(docs, "large.md"), new string('A', MemoryFileStore.MaximumBytes + 1));
             await using var host = await Fixture.StartAsync(root: root, ownsRoot: false);
             using var api = host.CreateClient();
             async Task<string[]> Files(object filters) =>
@@ -171,7 +171,9 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
                 query = @"ADR \d+", match = new { syntax = "regex", alternatives = new[] { "résumé" } }, output = new { after = 1 } });
             Assert.AreEqual(2, one.GetProperty("data").GetProperty("matches").GetArrayLength());
             await CallToolAsync(api, "search_memories", new { context_id = Context, query = "a", file = "../bad.md" }, error: "INVALID_PATH");
-            await CallToolAsync(api, "search_memories", new { context_id = Context, query = "a", file = "docs/API/note-010.md" }, error: "MEMORY_NOT_FOUND");
+            // The exact-case error depends on the directory's actual case sensitivity, not its operating system.
+            await CallToolAsync(api, "search_memories", new { context_id = Context, query = "a", file = "docs/API/note-010.md" },
+                error: Directory.Exists(Path.Combine(docs, "API")) ? "UNSAFE_PATH" : "MEMORY_NOT_FOUND");
         }
         finally
         {
@@ -209,6 +211,34 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
         }
     }
 
+    /// <summary>
+    /// Verifies that all installations launch ripgrep from PATH and reject unsupported versions.
+    /// </summary>
+    [TestMethod]
+    public void RipgrepExecutableNameAndVersion()
+    {
+        Assert.AreEqual("rg", RipgrepSearchService.DefaultExecutable());
+        Assert.IsTrue(RipgrepSearchService.SupportsVersion("ripgrep 15.2.0"));
+        Assert.IsTrue(RipgrepSearchService.SupportsVersion("ripgrep 16.1.0 (rev abc)"));
+        Assert.IsFalse(RipgrepSearchService.SupportsVersion("ripgrep 15.1.0"));
+        Assert.IsFalse(RipgrepSearchService.SupportsVersion("ripgrep 14.1.1"));
+        Assert.IsFalse(RipgrepSearchService.SupportsVersion("unknown 15.2.0"));
+    }
+
+    /// <summary>
+    /// Verifies that an available but incompatible command produces the actionable ripgrep startup error.
+    /// </summary>
+    /// <returns>The asynchronous startup capability validation.</returns>
+    [TestMethod]
+    public async Task IncompatibleSearchExecutableFailsStartup()
+    {
+        await using var host = await Fixture.StartAsync();
+        using var search = new RipgrepSearchService(host.Services.GetRequiredService<MemoryManager>(),
+            host.Services.GetRequiredService<MemoryFileStore>(), "dotnet", TimeSpan.FromSeconds(10));
+        var failure = await Assert.ThrowsExactlyAsync<MemoryFileException>(() => search.VerifyBinaryAsync(default));
+        Assert.AreEqual("SEARCH_UNAVAILABLE", failure.Code);
+    }
+
     /// <summary>Verifies bounded process and protocol failures, including invalid binary path and excess pipe data.</summary>
     /// <returns>The asynchronous fixture verification.</returns>
     [TestMethod]
@@ -225,12 +255,16 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
             }
 
             await Fails(Path.Combine(root, "missing"), [], "SEARCH_UNAVAILABLE");
-            await Fails("/bin/sh", ["-c", "exit 2"], "SEARCH_FAILED");
-            await Fails("/bin/sh", ["-c", "head -c 300000 /dev/zero"], "SCAN_LIMIT");
-            await Fails("/bin/sh", ["-c", "head -c 50000 /dev/zero >&2"], "SCAN_LIMIT");
-            await Fails("/bin/sh", ["-c", "yes x | head -n 21000"], "SCAN_LIMIT");
-            await Fails("/bin/sh", ["-c", "awk 'BEGIN { for (i=0;i<5000;i++) printf \"%01024d\\n\", i }'"], "SCAN_LIMIT");
-            await Fails("/bin/sh", ["-c", "printf unfinished"], "SEARCH_PROTOCOL");
+            if (OperatingSystem.IsLinux())
+            {
+                await Fails("/bin/sh", ["-c", "exit 2"], "SEARCH_FAILED");
+                await Fails("/bin/sh", ["-c", "head -c 300000 /dev/zero"], "SCAN_LIMIT");
+                await Fails("/bin/sh", ["-c", "head -c 50000 /dev/zero >&2"], "SCAN_LIMIT");
+                await Fails("/bin/sh", ["-c", "yes x | head -n 21000"], "SCAN_LIMIT");
+                await Fails("/bin/sh", ["-c", "awk 'BEGIN { for (i=0;i<5000;i++) printf \"%01024d\\n\", i }'"], "SCAN_LIMIT");
+                await Fails("/bin/sh", ["-c", "printf unfinished"], "SEARCH_PROTOCOL");
+            }
+
             var results = new RipgrepResults(new("a", "", null, new(), new(), new()));
             foreach (var bad in new[] { "invalid", """{"type":"other","data":{}}""", """{"type":"begin","data":{"path":{"text":"../other.md"}}}""",
                 """{"type":"begin","data":{"path":{"bytes":"/w=="}}}""" })
@@ -298,16 +332,16 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
                 var extra = search.RunAsync("local:other", query, waiting.Token);
                 Assert.IsFalse(extra.IsCompleted);
                 Assert.IsTrue((await projects.BindAsync("chat:other", other).WaitAsync(watchdog.Token)).Ok);
-                waiting.Cancel();
+                await waiting.CancelAsync();
                 await Assert.ThrowsAsync<OperationCanceledException>(() => extra);
                 Assert.HasCount(4, Directory.GetFiles(temp, "*.ready"));
-                stop.Cancel();
+                await stop.CancelAsync();
                 await Assert.ThrowsAsync<OperationCanceledException>(() => Task.WhenAll(active));
                 Assert.IsTrue((await writer.WaitAsync(watchdog.Token)).Ok);
             }
             finally
             {
-                stop.Cancel();
+                await stop.CancelAsync();
             }
 
             using var shortSearch = new RipgrepSearchService(manager, files, executable, TimeSpan.FromMilliseconds(800));
@@ -355,7 +389,7 @@ public sealed class AdvancedSearchTests : ServerHostTestBase
             }
 
             Assert.IsTrue((await projects.BindAsync("chat:after-timeout", id)).Ok);
-            await File.WriteAllTextAsync(executable, "#!/bin/sh\nexec /usr/bin/rg \"$@\"\n");
+            await File.WriteAllTextAsync(executable, "#!/bin/sh\nexec rg \"$@\"\n");
             Assert.IsTrue((await search.RunAsync(Context, query, default)).Ok);
         }
         finally

@@ -216,6 +216,11 @@ internal sealed class RipgrepResults(SearchRequest request)
                 }
 
                 var path = Text(data.GetProperty("path"));
+                // Ripgrep reports native separators on Windows; the allowlist uses '/' selectors.
+                if (OperatingSystem.IsWindows())
+                {
+                    path = path.Replace('\\', '/');
+                }
                 if (type == "begin")
                 {
                     if (_active is not null || !_allowed.Remove(path) || !MemoryFileStore.ValidPath(path))

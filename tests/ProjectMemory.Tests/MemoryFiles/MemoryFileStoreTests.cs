@@ -1,6 +1,7 @@
 namespace ProjectMemory.Tests.MemoryFiles;
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -160,7 +161,7 @@ public sealed class MemoryFileStoreTests
     }
 
     /// <summary>
-    /// Verifies that repeated fresh opens racing the publication move always see one complete version.
+    /// Verifies that fresh opens racing file replacement only return complete versions, including on Windows.
     /// </summary>
     /// <returns>The independent reader and writer verification.</returns>
     [TestMethod]
@@ -186,9 +187,7 @@ public sealed class MemoryFileStoreTests
             for (var i = 0; i < rounds; i++)
             {
                 Meet();
-                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-                using var text = new StreamReader(stream);
-                var content = text.ReadToEnd();
+                var content = ReadDuringReplacement(file);
                 Assert.IsTrue(content == first || content == second);
                 Meet();
             }
@@ -455,9 +454,58 @@ public sealed class MemoryFileStoreTests
         Assert.IsFalse(MemoryFileStore.ValidPath(string.Concat(Enumerable.Repeat("a/", 16)) + "b.md"));
     }
 
+    /// <summary>
+    /// Verifies that Windows device names are rejected as invalid memory paths without changing Linux addressing.
+    /// </summary>
+    [TestMethod]
+    public void ReservedWindowsDeviceNamesAreInvalidPaths()
+    {
+        foreach (var path in new[] { "CON.md", "nul.md", "prn.md", "AUX.notes.md", "COM1.md", "lpt9.md",
+            "notes/NUL.md", "PRN/notes.md", "CON .md" })
+        {
+            Assert.AreEqual(!OperatingSystem.IsWindows(), MemoryFileStore.ValidPath(path), path);
+            if (OperatingSystem.IsWindows())
+                Refused(() => _store.Write(_project, path, "text", null, default), "INVALID_PATH");
+        }
+
+        foreach (var folder in new[] { "CON", "notes/COM2", "AUX.notes" })
+        {
+            Refused(() => _store.List(_project, folder, 0, 1, default),
+                OperatingSystem.IsWindows() ? "INVALID_PATH" : "MEMORY_NOT_FOUND");
+        }
+
+        // Superscript device suffixes are already excluded by the general letter/digit rule.
+        Assert.IsFalse(MemoryFileStore.ValidPath("COM¹.md"));
+        Assert.IsFalse(MemoryFileStore.ValidPath("LPT².md"));
+        Assert.IsTrue(MemoryFileStore.ValidPath("notes/CONTEXT.md"));
+        Assert.IsTrue(MemoryFileStore.ValidPath("COM10.md"));
+        Assert.IsTrue(MemoryFileStore.ValidPath("notes/LPT-safe.md"));
+    }
+
     #endregion
 
     #region Private Methods
+
+    private static string ReadDuringReplacement(string file)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                using var text = new StreamReader(stream);
+                return text.ReadToEnd();
+            }
+            catch (IOException exception) when (OperatingSystem.IsWindows()
+                && exception.HResult == unchecked((int)0x80070020)
+                && stopwatch.Elapsed < TimeSpan.FromSeconds(2))
+            {
+                // Windows replacement can briefly hold the new file exclusively. Retry only that sharing violation.
+                Thread.Sleep(2);
+            }
+        }
+    }
 
     private MemorySearchResult Search(string query, string folder, int offset, int limit, CancellationToken token)
     {

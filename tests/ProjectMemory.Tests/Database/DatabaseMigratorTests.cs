@@ -204,10 +204,10 @@ public sealed class DatabaseMigratorTests
         for (var attempt = 0; attempt < 2; attempt++)
         {
             // Represents a crash after the old database was deleted or during File.Copy.
-            File.WriteAllText(paths.DatabasePath, "partial restore");
-            File.WriteAllText(paths.DatabasePath + "-wal", "interrupted wal");
-            File.WriteAllText(paths.DatabasePath + "-shm", "interrupted shm");
-            File.WriteAllText(paths.DatabasePath + "-journal", "interrupted journal");
+            await File.WriteAllTextAsync(paths.DatabasePath, "partial restore");
+            await File.WriteAllTextAsync(paths.DatabasePath + "-wal", "interrupted wal");
+            await File.WriteAllTextAsync(paths.DatabasePath + "-shm", "interrupted shm");
+            await File.WriteAllTextAsync(paths.DatabasePath + "-journal", "interrupted journal");
             await migrator.MigrateAsync(CancellationToken.None);
             Assert.IsFalse(File.Exists(paths.MigrationLockPath));
             Assert.IsFalse(File.Exists(paths.DatabasePath + "-wal"));
@@ -217,7 +217,7 @@ public sealed class DatabaseMigratorTests
             Assert.IsTrue(TableExists(paths.DatabasePath, "ProjectRoutings"));
 
             if (attempt == 0)
-                File.WriteAllText(paths.MigrationLockPath, "interrupted");
+                await File.WriteAllTextAsync(paths.MigrationLockPath, "interrupted");
         }
     }
 
@@ -230,7 +230,7 @@ public sealed class DatabaseMigratorTests
     {
         var paths = new DatabasePaths(_testRoot);
         CreateLegacyDatabase(paths.DatabasePath);
-        File.WriteAllText(paths.MigrationLockPath, "interrupted");
+        await File.WriteAllTextAsync(paths.MigrationLockPath, "interrupted");
         var before = await File.ReadAllBytesAsync(paths.DatabasePath);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => CreateMigrator(paths).MigrateAsync(CancellationToken.None));
@@ -247,8 +247,8 @@ public sealed class DatabaseMigratorTests
     {
         var paths = new DatabasePaths(_testRoot);
         CreateLegacyDatabase(paths.DatabasePath);
-        File.WriteAllText(paths.BackupPath, "invalid sqlite file");
-        File.WriteAllText(paths.MigrationLockPath, "interrupted");
+        await File.WriteAllTextAsync(paths.BackupPath, "invalid sqlite file");
+        await File.WriteAllTextAsync(paths.MigrationLockPath, "interrupted");
         var before = await File.ReadAllBytesAsync(paths.DatabasePath);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => CreateMigrator(paths).MigrateAsync(CancellationToken.None));
@@ -266,7 +266,7 @@ public sealed class DatabaseMigratorTests
         var paths = new DatabasePaths(_testRoot);
         CreateLegacyDatabase(paths.DatabasePath);
         File.WriteAllBytes(paths.BackupPath, []);
-        File.WriteAllText(paths.MigrationLockPath, "interrupted");
+        await File.WriteAllTextAsync(paths.MigrationLockPath, "interrupted");
         var before = await File.ReadAllBytesAsync(paths.DatabasePath);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => CreateMigrator(paths).MigrateAsync(CancellationToken.None));
@@ -284,8 +284,8 @@ public sealed class DatabaseMigratorTests
         var paths = new DatabasePaths(_testRoot);
         await CreateMigrator(paths).MigrateAsync(CancellationToken.None);
         File.Copy(paths.DatabasePath, paths.BackupPath);
-        File.WriteAllText(paths.MigrationLockPath, "interrupted");
-        File.WriteAllText(paths.DatabasePath, "partial");
+        await File.WriteAllTextAsync(paths.MigrationLockPath, "interrupted");
+        await File.WriteAllTextAsync(paths.DatabasePath, "partial");
 
         await CreateMigrator(paths).MigrateAsync(CancellationToken.None);
         Assert.IsFalse(File.Exists(paths.MigrationLockPath));
@@ -340,7 +340,7 @@ public sealed class DatabaseMigratorTests
     {
         var paths = new DatabasePaths(_testRoot);
         CreateLegacyDatabase(paths.DatabasePath);
-        File.WriteAllText(paths.BackupPath + "-wal", "unpaired journal");
+        await File.WriteAllTextAsync(paths.BackupPath + "-wal", "unpaired journal");
         var original = await File.ReadAllBytesAsync(paths.DatabasePath);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => CreateMigrator(paths).MigrateAsync(CancellationToken.None));
@@ -358,7 +358,7 @@ public sealed class DatabaseMigratorTests
     public async Task MissingActiveDatabaseWithOrphanedWalFailsClosed()
     {
         var paths = new DatabasePaths(_testRoot);
-        File.WriteAllText(paths.DatabasePath + "-wal", "orphaned");
+        await File.WriteAllTextAsync(paths.DatabasePath + "-wal", "orphaned");
         await Assert.ThrowsAsync<InvalidOperationException>(() => CreateMigrator(paths).MigrateAsync(CancellationToken.None));
         Assert.IsFalse(File.Exists(paths.DatabasePath));
         Assert.IsTrue(File.Exists(paths.DatabasePath + "-wal"));
@@ -406,7 +406,7 @@ public sealed class DatabaseMigratorTests
     {
         var paths = new DatabasePaths(_testRoot);
         CreateLegacyDatabase(paths.DatabasePath);
-        File.WriteAllText(paths.MigrationPath, "incomplete snapshot");
+        await File.WriteAllTextAsync(paths.MigrationPath, "incomplete snapshot");
         await CreateMigrator(paths).MigrateAsync(CancellationToken.None);
         Assert.IsTrue(TableExists(paths.BackupPath, "LegacyMarker"));
         Assert.IsFalse(File.Exists(paths.MigrationPath));

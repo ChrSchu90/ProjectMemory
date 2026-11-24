@@ -131,8 +131,16 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
             checkpoint?.Invoke(LifecycleCheckpoint.Staged);
             token.ThrowIfCancellationRequested();
             // The exclusive project lease protects the create check and hash CAS.
-            // Both names share a parent. Use the runtime's rename path for both operations.
-            File.Move(temporary, file, overwrite: true);
+            // Windows needs replacement semantics for existing files held by delete-sharing readers.
+            // Both paths share a parent; Linux retains the existing rename publication.
+            if (OperatingSystem.IsWindows() && expected is not null)
+            {
+                File.Replace(temporary, file, null);
+            }
+            else
+            {
+                File.Move(temporary, file, overwrite: true);
+            }
             published = true;
             checkpoint?.Invoke(LifecycleCheckpoint.Published);
             return result;
@@ -253,7 +261,8 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
         if (entries.Count == 0)
             return (AppContext.BaseDirectory, []);
         var directory = ProjectFolder(id, request.Folder, false);
-        return (directory, entries.Select(entry => Path.GetRelativePath(directory, entry.File)).ToArray());
+        // MCP selectors always use '/', regardless of the native filesystem separator.
+        return (directory, entries.Select(entry => Path.GetRelativePath(directory, entry.File).Replace(Path.DirectorySeparatorChar, '/')).ToArray());
     }
 
     /// <summary>
@@ -377,10 +386,26 @@ internal sealed class MemoryFileStore(IOptions<ProjectMemoryOptions> options, Ac
         if (path.Length is 0 or > 1024)
             return false;
         var parts = path.Split('/');
+        if (OperatingSystem.IsWindows() && parts.Any(IsReservedWindowsDeviceName))
+            return false;
         return parts.Length <= maximumComponents && parts.All(part => part.Length > 0
             && part[0] is not ('.' or ' ') && part[^1] is not ('.' or ' ')
             && part.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' or ' ') && Utf8.GetByteCount(part) <= 255)
             && Utf8.GetByteCount(path) <= 1024;
+    }
+
+    private static bool IsReservedWindowsDeviceName(string part)
+    {
+        // Win32 device names are reserved for files and directories, even when followed by an extension.
+        var dot = part.IndexOf('.');
+        var name = part.AsSpan(0, dot >= 0 ? dot : part.Length).TrimEnd(' ');
+        return name.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+            || (name.Length == 4 && (name[..3].Equals("COM", StringComparison.OrdinalIgnoreCase)
+                || name[..3].Equals("LPT", StringComparison.OrdinalIgnoreCase))
+                && "123456789¹²³".Contains(name[3]));
     }
 
     private void PurgeChildren(string parent, CancellationToken token, int depth)

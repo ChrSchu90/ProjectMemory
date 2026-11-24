@@ -849,7 +849,7 @@ public sealed class EfProjectRegistryTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         var a = await fixture.CreateProjectAsync("a");
         using var cancelled = new CancellationTokenSource();
-        cancelled.Cancel();
+        await cancelled.CancelAsync();
         await Assert.ThrowsAsync<OperationCanceledException>(() => fixture.Registry.BindAsync(DatabaseFixture.ParseContext("chat:Cancelled"), a.MemoryProjectId, cancelled.Token));
         Assert.AreEqual(RegistryError.ProjectNotFound, (await fixture.Registry.BindAsync(DatabaseFixture.ParseContext("chat:Missing"), Guid.NewGuid())).Error);
         await using (var context = fixture.CreateContext())
