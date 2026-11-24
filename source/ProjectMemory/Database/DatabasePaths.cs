@@ -39,6 +39,7 @@ internal sealed class DatabasePaths
         DatabasePath = Path.Combine(normalizedRootPath, "ProjectMemory.db");
         MigrationPath = DatabasePath + ".migrate";
         BackupPath = DatabasePath + ".pre-migration";
+        MigrationLockPath = Path.Combine(normalizedRootPath, ".migration-lock");
     }
 
     #endregion
@@ -51,14 +52,19 @@ internal sealed class DatabasePaths
     public string DatabasePath { get; }
 
     /// <summary>
-    /// Gets the temporary migration database path.
+    /// Gets the staging database path used during initialization and snapshot preparation.
     /// </summary>
     public string MigrationPath { get; }
 
     /// <summary>
-    /// Gets the single previous-version backup database path.
+    /// Gets the immutable pre-migration snapshot path used only for recovery.
     /// </summary>
     public string BackupPath { get; }
+
+    /// <summary>
+    /// Gets the recovery marker indicating that a database migration was started but not completed.
+    /// </summary>
+    public string MigrationLockPath { get; }
 
     #endregion
 

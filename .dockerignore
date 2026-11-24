@@ -26,5 +26,7 @@
 **/debug
 **/release
 **/TestResults
+/.planning/
+/AGENTS.md
 LICENSE
 README.md

@@ -49,40 +49,6 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     #region Public Methods
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ProjectRouting>> ListProjectsAsync(CancellationToken cancellationToken = default)
-    {
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await dbContext.RoutingProjects
-                   .AsNoTracking()
-                   .OrderBy(project => project.MemoryProjectName)
-                   .Select(project => new ProjectRouting(project.MemoryProjectId, project.MemoryProjectName, project.Status))
-                   .ToListAsync(cancellationToken)
-                   .ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<ContextBinding>> ListBindingsAsync(CancellationToken cancellationToken = default)
-    {
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var persistedBindings = await dbContext.ContextBindings
-                                    .AsNoTracking()
-                                    .OrderBy(binding => binding.BindingType)
-                                    .ThenBy(binding => binding.BindingName)
-                                    .Select(binding => new { binding.BindingType, binding.BindingName, binding.RoutingProject.MemoryProjectId, binding.Status })
-                                    .ToListAsync(cancellationToken)
-                                    .ConfigureAwait(false);
-
-        var bindings = new List<ContextBinding>(persistedBindings.Count);
-        foreach (var persistedBinding in persistedBindings)
-        {
-            var contextId = CreateContextId(persistedBinding.BindingType, persistedBinding.BindingName);
-            bindings.Add(new ContextBinding(contextId, persistedBinding.MemoryProjectId, persistedBinding.Status));
-        }
-
-        return bindings;
-    }
-
-    /// <inheritdoc />
     public async Task<ProjectRoute?> FindRouteAsync(ContextId contextId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(contextId);
@@ -91,7 +57,7 @@ internal sealed class EfProjectRegistry : IProjectRegistry
         var route = await dbContext.ContextBindings
                         .AsNoTracking()
                         .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName)
-                        .Select(binding => new ProjectRoute(binding.RoutingProject.MemoryProjectId, binding.RoutingProject.MemoryProjectName, binding.RoutingProject.Status, binding.Status))
+                        .Select(binding => new ProjectRoute(binding.RoutingProject.MemoryProjectId, binding.RoutingProject.MemoryProjectName, binding.RoutingProject.DeletionPending ? ProjectStatus.Archived : binding.RoutingProject.Status, binding.Status))
                         .SingleOrDefaultAsync(cancellationToken)
                         .ConfigureAwait(false);
 
@@ -114,28 +80,14 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     }
 
     /// <inheritdoc />
-    public async Task<ProjectRouting?> FindByMemoryProjectNameAsync(string memoryProjectName, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(memoryProjectName);
-
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await dbContext.RoutingProjects
-            .AsNoTracking()
-            .Where(project => project.MemoryProjectName == memoryProjectName)
-            .Select(project => new ProjectRouting(project.MemoryProjectId, project.MemoryProjectName, project.Status))
-            .SingleOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public async Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, Status status, CancellationToken cancellationToken = default)
+    public async Task<ProjectRouting> CreateAsync(Guid memoryProjectId, string memoryProjectName, ProjectStatus status, CancellationToken cancellationToken = default)
     {
         if (memoryProjectId == Guid.Empty)
             throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(memoryProjectName);
 
-        if (status is not Status.Active and not Status.Inactive)
+        if (status is not ProjectStatus.Active and not ProjectStatus.Archived)
             throw new ArgumentOutOfRangeException(nameof(status), status, "The project routing status is unsupported.");
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -161,25 +113,6 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     }
 
     /// <inheritdoc />
-    public async Task<bool> TryRemoveProjectAsync(Guid memoryProjectId, CancellationToken cancellationToken = default)
-    {
-        if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
-
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var affectedRows = await dbContext.RoutingProjects.Where(project => project.MemoryProjectId == memoryProjectId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-        switch (affectedRows)
-        {
-            case 0:
-                return false;
-            case 1:
-                return true;
-            default:
-                throw new InvalidOperationException($"Removing project routing '{memoryProjectId:D}' affected more than one row.");
-        }
-    }
-
-    /// <inheritdoc />
     public async Task<ContextBinding?> FindBindingAsync(ContextId contextId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(contextId);
@@ -193,119 +126,13 @@ internal sealed class EfProjectRegistry : IProjectRegistry
     }
 
     /// <inheritdoc />
-    public async Task<ContextBinding> CreateBindingAsync(ContextId contextId, Guid memoryProjectId, Status status, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(contextId);
-        if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
-
-        if (status is not Status.Active and not Status.Inactive)
-            throw new ArgumentOutOfRangeException(nameof(status), status, "The context binding status is unsupported.");
-
-
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var project = await dbContext.RoutingProjects
-                          .SingleOrDefaultAsync(item => item.MemoryProjectId == memoryProjectId, cancellationToken)
-                          .ConfigureAwait(false);
-
-        if (project == null)
-            throw new InvalidOperationException($"No registered project routing exists for project '{memoryProjectId:D}'.");
-
-        var entity = new ContextBindingEntity
-        {
-            BindingType = contextId.BindingType,
-            BindingName = contextId.BindingName,
-            Status = status
-        };
-
-        project.Bindings.Add(entity);
-
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
-        {
-            throw new ProjectRegistryConflictException($"A binding already exists for context '{contextId}'.", ex);
-        }
-
-        return new ContextBinding(contextId, memoryProjectId, entity.Status);
-    }
-
-    /// <inheritdoc />
-    public async Task<bool> TryUpdateProjectStatusAsync(Guid memoryProjectId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default)
-    {
-        if (memoryProjectId == Guid.Empty)
-            throw new ArgumentException("The project identifier must not be empty.", nameof(memoryProjectId));
-
-        if (expectedStatus is not Status.Active and not Status.Inactive)
-            throw new ArgumentOutOfRangeException(nameof(expectedStatus), expectedStatus, "The expected project routing status is unsupported.");
-
-        if (newStatus is not Status.Active and not Status.Inactive)
-            throw new ArgumentOutOfRangeException(nameof(newStatus), newStatus, "The new project routing status is unsupported.");
-
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var updatedAt = DateTimeOffset.UtcNow;
-        var affectedRows = await dbContext.RoutingProjects
-                               .Where(project => project.MemoryProjectId == memoryProjectId && project.Status == expectedStatus)
-                               .ExecuteUpdateAsync(setters => setters
-                                       .SetProperty(project => project.Status, newStatus)
-                                       .SetProperty(project => project.UpdatedAt, updatedAt),
-                                   cancellationToken)
-                               .ConfigureAwait(false);
-
-        switch (affectedRows)
-        {
-            case 0:
-                return false;
-            case 1:
-                return true;
-            default:
-                throw new InvalidOperationException($"Updating project routing '{memoryProjectId:D}' affected more than one row.");
-        }
-    }
-
-    /// <inheritdoc />
-    public async Task<bool> TryUpdateBindingStatusAsync(ContextId contextId, Status expectedStatus, Status newStatus, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(contextId);
-
-        if (expectedStatus is not Status.Active and not Status.Inactive)
-            throw new ArgumentOutOfRangeException(nameof(expectedStatus), expectedStatus, "The expected context binding status is unsupported.");
-
-        if (newStatus is not Status.Active and not Status.Inactive)
-            throw new ArgumentOutOfRangeException(nameof(newStatus), newStatus, "The new context binding status is unsupported.");
-
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var updatedAt = DateTimeOffset.UtcNow;
-        var affectedRows = await dbContext.ContextBindings
-                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName && binding.Status == expectedStatus)
-                               .ExecuteUpdateAsync(
-                                   setters => setters
-                                       .SetProperty(binding => binding.Status, newStatus)
-                                       .SetProperty(binding => binding.UpdatedAt, updatedAt),
-                                   cancellationToken)
-                               .ConfigureAwait(false);
-
-        switch (affectedRows)
-        {
-            case 0:
-                return false;
-            case 1:
-                return true;
-            default:
-                throw new InvalidOperationException($"Updating context binding '{contextId}' affected more than one row.");
-        }
-    }
-
-    /// <inheritdoc />
     public async Task<bool> TryRemoveBindingAsync(ContextId contextId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(contextId);
 
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var affectedRows = await dbContext.ContextBindings
-                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName)
+                               .Where(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName && !binding.RoutingProject.DeletionPending)
                                .ExecuteDeleteAsync(cancellationToken)
                                .ConfigureAwait(false);
 
@@ -318,6 +145,91 @@ internal sealed class EfProjectRegistry : IProjectRegistry
             default:
                 throw new InvalidOperationException($"Removing context binding '{contextId}' affected more than one row.");
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ProjectRouting>> ListProjectsPageAsync(int offset, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await context.RoutingProjects.AsNoTracking().OrderBy(project => project.MemoryProjectName).ThenBy(project => project.MemoryProjectId)
+            .Skip(offset).Take(limit).Select(project => new ProjectRouting(project.MemoryProjectId, project.MemoryProjectName, project.Status)).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ContextBinding>> ListBindingsPageAsync(Guid? projectId, int offset, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = context.ContextBindings.AsNoTracking();
+        if (projectId.HasValue)
+        {
+            query = query.Where(binding => binding.RoutingProject.MemoryProjectId == projectId.Value);
+        }
+
+        var rows = await query.OrderBy(binding => binding.BindingType).ThenBy(binding => binding.BindingName).ThenBy(binding => binding.Id)
+            .Skip(offset).Take(limit).Select(binding => new { binding.BindingType, binding.BindingName, binding.Status, binding.RoutingProject.MemoryProjectId }).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return rows.Select(row => new ContextBinding(CreateContextId(row.BindingType, row.BindingName), row.MemoryProjectId, row.Status)).ToArray();
+    }
+
+    /// <inheritdoc />
+    public async Task<RegistryChange<ContextBinding>> BindAsync(ContextId contextId, Guid projectId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(contextId);
+        if (projectId == Guid.Empty)
+            throw new ArgumentException("A project identifier is required.", nameof(projectId));
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // Microsoft.Data.Sqlite starts a non-deferred transaction: reserve the writer before checking state.
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var project = await context.RoutingProjects.SingleOrDefaultAsync(item => item.MemoryProjectId == projectId, cancellationToken).ConfigureAwait(false);
+        if (project is null)
+            return new(null, Error: RegistryError.ProjectNotFound);
+        if (project.DeletionPending)
+            return new(null, Error: RegistryError.ProjectBlocked);
+        if (project.Status != ProjectStatus.Active)
+            return new(null, Error: RegistryError.ProjectArchived);
+        var existing = await context.ContextBindings.SingleOrDefaultAsync(binding => binding.BindingType == contextId.BindingType && binding.BindingName == contextId.BindingName, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+        {
+            if (existing.RoutingProjectId != project.Id || existing.Status != Status.Active)
+                return new(null, Error: RegistryError.Conflict);
+            return new(new ContextBinding(contextId, projectId, Status.Active));
+        }
+
+        context.ContextBindings.Add(new ContextBindingEntity { RoutingProjectId = project.Id, BindingType = contextId.BindingType, BindingName = contextId.BindingName });
+
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new(new ContextBinding(contextId, projectId, Status.Active), Changed: true);
+    }
+
+    /// <inheritdoc />
+    public async Task<RegistryChange<ProjectRouting>> SetProjectStatusAsync(Guid projectId, ProjectStatus status, CancellationToken cancellationToken = default)
+    {
+        if (projectId == Guid.Empty)
+            throw new ArgumentException("A project identifier is required.", nameof(projectId));
+        if (status is not ProjectStatus.Active and not ProjectStatus.Archived)
+            throw new ArgumentOutOfRangeException(nameof(status));
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var project = await context.RoutingProjects.SingleOrDefaultAsync(item => item.MemoryProjectId == projectId, cancellationToken).ConfigureAwait(false);
+        if (project is null)
+            return new(null, Error: RegistryError.ProjectNotFound);
+        if (project.DeletionPending)
+            return new(null, Error: RegistryError.ProjectBlocked);
+        var changed = project.Status != status;
+        if (changed)
+        {
+            project.Status = status;
+            project.UpdatedAt = DateTimeOffset.UtcNow;
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new(new ProjectRouting(project.MemoryProjectId, project.MemoryProjectName, project.Status), changed);
     }
 
     #endregion

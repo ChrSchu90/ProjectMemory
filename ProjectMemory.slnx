@@ -3,11 +3,16 @@
     <File Path=".dockerignore" />
     <File Path="docker-debug.sh" />
     <File Path="Dockerfile" />
+    <File Path="examples/.env" />
+  </Folder>
+  <Folder Name="/Docker Items/examples/">
+    <File Path="examples/.env" />
     <File Path="examples/compose.yml" />
   </Folder>
   <Folder Name="/Github Items/">
     <File Path=".github/dependabot.yml" />
     <File Path=".github/workflows/build.yml" />
+    <File Path=".github/workflows/update-dependencies.yml" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />

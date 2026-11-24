@@ -3,6 +3,7 @@ namespace ProjectMemory.Routing;
 using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 /// <summary>
 /// Represents a canonical technical context identifier used for project routing.
@@ -21,6 +22,11 @@ public sealed record ContextId
     /// The Git repository identifier
     /// </summary>
     internal const string GitRepositoryIdentifier = "git";
+
+    /// <summary>
+    /// Identifies an explicitly configured workspace without Git remotes.
+    /// </summary>
+    internal const string LocalRepositoryIdentifier = "local";
 
     #endregion
 
@@ -99,7 +105,7 @@ public sealed record ContextId
         var typeIdentifier = value[..separatorIndex];
         var bindingName = value[(separatorIndex + 1)..];
 
-        if (char.IsWhiteSpace(bindingName[0]) || char.IsWhiteSpace(bindingName[^1]))
+        if (bindingName.Length > 255 || bindingName.Any(c => c < '!' || c > '~'))
             return false;
 
         if (!TryParseBindingType(typeIdentifier, out var bindingType))
@@ -129,6 +135,9 @@ public sealed record ContextId
             case GitRepositoryIdentifier:
                 bindingType = BindingType.GitRepository;
                 return true;
+            case LocalRepositoryIdentifier:
+                bindingType = BindingType.LocalRepository;
+                return true;
             default:
                 bindingType = default;
                 return false;
@@ -141,6 +150,7 @@ public sealed record ContextId
         {
             BindingType.ChatProject => ChatProjectIdentifier,
             BindingType.GitRepository => GitRepositoryIdentifier,
+            BindingType.LocalRepository => LocalRepositoryIdentifier,
             _ => throw new ArgumentOutOfRangeException(nameof(bindingType), bindingType, null)
         };
     }

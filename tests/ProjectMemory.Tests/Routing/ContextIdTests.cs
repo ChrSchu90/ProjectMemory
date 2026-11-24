@@ -10,11 +10,15 @@ using ProjectMemory.Routing;
 [TestClass]
 public sealed class ContextIdTests
 {
+    #region Static Fields
+
+    #endregion
+
     #region Private Fields
 
     #endregion
 
-    #region Tests Constructors
+    #region Test Constructors
 
     #endregion
 
@@ -24,10 +28,12 @@ public sealed class ContextIdTests
 
     #region Tests
 
-
     /// <summary>
     /// Verifies that binding components are formatted into the canonical technical context identifier.
     /// </summary>
+    /// <param name="bindingType">The supported namespace represented by the binding.</param>
+    /// <param name="bindingName">The exact case-sensitive suffix to preserve in the context ID.</param>
+    /// <param name="expected">The complete context ID expected after formatting the supplied binding components.</param>
     [TestMethod]
     [DataRow(BindingType.ChatProject, "chatty-mcp-and-aiharborvm", "chat:chatty-mcp-and-aiharborvm")]
     [DataRow(BindingType.GitRepository, "github.com/ChrSchu90/ProjectMemory", "git:github.com/ChrSchu90/ProjectMemory")]
@@ -43,6 +49,7 @@ public sealed class ContextIdTests
     /// <summary>
     /// Verifies that invalid binding names are rejected when creating a canonical context identifier.
     /// </summary>
+    /// <param name="bindingName">The invalid or padded suffix that context creation must reject.</param>
     [TestMethod]
     [DataRow("")]
     [DataRow(" ")]
@@ -68,17 +75,19 @@ public sealed class ContextIdTests
     }
 
     /// <summary>
-    /// Verifies that a canonical Git repository context is parsed into its expected type and name.
+    /// Verifies that a Git repository context parses into its type and name and formats back to the original identifier.
     /// </summary>
     [TestMethod]
     public void TryParseParsesGitRepositoryContext()
     {
-        var success = ContextId.TryParse("git:github.com/ChrSchu90/ProjectMemory", out var contextId);
+        const string value = "git:github.com/ChrSchu90/ProjectMemory";
+        var success = ContextId.TryParse(value, out var contextId);
 
         Assert.IsTrue(success);
         Assert.IsNotNull(contextId);
         Assert.AreEqual(BindingType.GitRepository, contextId.BindingType);
         Assert.AreEqual("github.com/ChrSchu90/ProjectMemory", contextId.BindingName);
+        Assert.AreEqual(value, contextId.ToString());
     }
 
     /// <summary>
@@ -95,26 +104,23 @@ public sealed class ContextIdTests
     }
 
     /// <summary>
-    /// Verifies that parsing and formatting a canonical context identifier preserves the original value.
-    /// </summary>
-    [TestMethod]
-    public void ToStringReturnsCanonicalContextId()
-    {
-        const string value = "git:github.com/ChrSchu90/ProjectMemory";
-
-        Assert.IsTrue(ContextId.TryParse(value, out var contextId));
-        Assert.AreEqual(value, contextId!.ToString());
-    }
-
-    /// <summary>
     /// Verifies that invalid or non-canonical context identifiers are rejected.
     /// </summary>
+    /// <param name="value">The invalid context ID, including null, unsupported prefixes or malformed suffixes.</param>
     [TestMethod]
     [DataRow(null)]
     [DataRow("")]
     [DataRow("git:")]
     [DataRow(":repository")]
     [DataRow("unknown:value")]
+    [DataRow("local:")]
+    [DataRow("CHAT:value")]
+    [DataRow("LOCAL:value")]
+    [DataRow("chat:has space")]
+    [DataRow("chat:has\ttab")]
+    [DataRow("local:line\nbreak")]
+    [DataRow("git:non-ascii-ü")]
+    [DataRow("chat:delete-\u007f")]
     [DataRow("GIT:github.com/owner/repository")]
     [DataRow(" git:github.com/owner/repository")]
     [DataRow("git:github.com/owner/repository ")]
@@ -125,6 +131,25 @@ public sealed class ContextIdTests
 
         Assert.IsFalse(success);
         Assert.IsNull(contextId);
+    }
+
+    /// <summary>
+    /// Verifies that all three namespaces preserve case and accept exactly the approved suffix boundaries.
+    /// </summary>
+    /// <param name="prefix">The supported context namespace whose case sensitivity and suffix boundaries are verified.</param>
+    [TestMethod]
+    [DataRow("git:")]
+    [DataRow("chat:")]
+    [DataRow("local:")]
+    public void ExactCaseAndSuffixBoundaries(string prefix)
+    {
+        Assert.IsTrue(ContextId.TryParse(prefix + "Portal", out var upper));
+        Assert.IsTrue(ContextId.TryParse(prefix + "portal", out var lower));
+        Assert.AreNotEqual(upper, lower);
+        Assert.AreEqual(prefix + "Portal", upper.ToString());
+        Assert.IsTrue(ContextId.TryParse(prefix + "A", out _));
+        Assert.IsTrue(ContextId.TryParse(prefix + new string('A', 255), out _));
+        Assert.IsFalse(ContextId.TryParse(prefix + new string('A', 256), out _));
     }
 
     #endregion

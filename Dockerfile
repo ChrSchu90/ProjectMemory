@@ -2,7 +2,7 @@
 # Build
 # ------------------------------------------------------------
 
-FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:11.0-alpine3.24@sha256:52556c0fb9d0f609ae9aeab9efeeba96f4acc2f7038f7696f2235ccbdbb8e290 AS build
+FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:10.0-alpine3.24@sha256:0294f285d062afacc8b5f6d7febb0cd4ee879320e5585fa15f2f4ebf1feb9ba7 AS build
 
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -31,6 +31,9 @@ RUN dotnet publish \
 
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS final
 
+ARG RIPGREP_VERSION=15.2.0
+
+# Install required tools, dotnet dependencies etc.
 RUN apk add --upgrade --no-cache \
         ca-certificates-bundle \
         curl \
@@ -41,19 +44,24 @@ RUN apk add --upgrade --no-cache \
     && mkdir -p /app /data \
     && chmod 0777 /data
 
+# Install specific ripgrep (https://github.com/BurntSushi/ripgrep) version for search
+RUN apk add --no-cache \
+        --repository https://dl-cdn.alpinelinux.org/alpine/edge/community \
+        "ripgrep=${RIPGREP_VERSION}-r0" \
+    && /usr/bin/rg --version \
+    && /usr/bin/rg --pcre2-version
+
 WORKDIR /app
 
 COPY --from=build /app/publish/ ./
 
 ENV \
-    ASPNETCORE_HTTP_PORTS=8000 \
     DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true \
     ProjectMemory__DataDirectory=/data
 
-# ToDo: Add health check
-#HEALTHCHECK --interval=30s --timeout=35s --start-period=30s --retries=3 \
-#   CMD curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8000/health/ready > /dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=35s --start-period=30s --retries=3 \
+   CMD curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8000/health/ready > /dev/null || exit 1
 
 EXPOSE 8000
 VOLUME ["/data"]

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database;
+using ProjectMemory.Project;
 using ProjectMemory.Routing;
 
 /// <summary>
@@ -58,7 +59,7 @@ public sealed class PersistenceServiceCollectionExtensionsTests
         
         using var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
         Assert.IsNotNull(serviceProvider.GetRequiredService<IProjectRegistry>());
-        Assert.IsNotNull(serviceProvider.GetRequiredService<RoutingManager>());
+        Assert.IsNotNull(serviceProvider.GetRequiredService<ProjectLocks>());
     }
 
     #endregion

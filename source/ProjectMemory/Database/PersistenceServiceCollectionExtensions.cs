@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using ProjectMemory.Configuration;
 using ProjectMemory.Database.Routing;
 using ProjectMemory.Routing;
+using ProjectMemory.Project;
 
 /// <summary>
 /// Provides dependency-injection registration for persistence services.
@@ -55,7 +56,7 @@ public static class PersistenceServiceCollectionExtensions
 
         services.AddSingleton<DatabaseMigrator>();
         services.AddSingleton<IProjectRegistry, EfProjectRegistry>();
-        services.AddSingleton<RoutingManager>();
+        services.AddSingleton<ProjectLocks>();
         return services;
     }
 

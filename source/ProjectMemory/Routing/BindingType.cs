@@ -1,4 +1,4 @@
-﻿namespace ProjectMemory.Routing;
+namespace ProjectMemory.Routing;
 
 /// <summary>
 /// Identifies the source type of project context binding.
@@ -6,7 +6,7 @@
 public enum BindingType
 {
     /// <summary>
-    /// A ChatGPT project context using the <c>chatgpt-project</c> identifier.
+    /// A vendor-neutral web context using the <c>chat</c> prefix.
     /// </summary>
     ChatProject,
 
@@ -18,5 +18,5 @@ public enum BindingType
     /// <summary>
     /// A local Git repository context.
     /// </summary>
-    //LocalRepository // ToDo: do we need this?
+    LocalRepository
 }

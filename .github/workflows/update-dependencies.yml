@@ -1,0 +1,81 @@
+name: Update Dependencies
+
+# Required Repo Setting!!! Settings → Actions → General → Workflow permissions [`Allow GitHub Actions to create and approve pull requests`]
+
+on:
+  schedule:
+    - cron: '17 13 * * *'
+      timezone: 'Europe/Berlin'
+  workflow_dispatch:
+
+concurrency:
+  group: update-dependencies
+  cancel-in-progress: true
+
+jobs:
+  update:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+    
+    - name: Get Dependency Version Info
+      id: versions
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        
+        ripgrep_current="$(sed -n -E 's/^ARG RIPGREP_VERSION=//p' Dockerfile | head -n1)"
+        echo "ripgrep_current=$ripgrep_current" >> "$GITHUB_OUTPUT"
+        echo "::notice::[info] ripgrep_current=$ripgrep_current"
+        ripgrep_latest="$(docker run --rm alpine:3.24 sh -c \
+          'apk --repositories-file /dev/null -U -X https://dl-cdn.alpinelinux.org/alpine/edge/community search -x ripgrep' \
+          | sed -nE 's/^ripgrep-([0-9]+\.[0-9]+\.[0-9]+)-r[0-9]+$/\1/p')"
+        [[ -n "$ripgrep_latest" ]] || { echo "::error::Could not determine ripgrep version from Alpine edge/community"; exit 1; }
+        echo "ripgrep_latest=$ripgrep_latest" >> "$GITHUB_OUTPUT"
+        echo "::notice::[info] ripgrep_latest=$ripgrep_latest"
+        [[ "$ripgrep_current" != "$ripgrep_latest" ]] && ripgrep_changed=true || ripgrep_changed=false
+        echo "ripgrep_changed=$ripgrep_changed" >> "$GITHUB_OUTPUT"
+        echo "::notice::[info] ripgrep_changed=$ripgrep_changed"
+        
+        [[ "$ripgrep_changed" == "true" ]] && update_available=true || update_available=false
+        echo "update_available=$update_available" >> "$GITHUB_OUTPUT"
+        echo "::notice::[info] update_available=$update_available"
+    
+    - name: Update Dependency Versions
+      if: ${{ steps.versions.outputs.update_available == 'true' }}
+      run: |
+        set -euo pipefail
+        
+        sed -i -E 's/^(ARG RIPGREP_VERSION=).*/\1${{ steps.versions.outputs.ripgrep_latest }}/' Dockerfile
+        sed -i -E 's/^(RIPGREP_VERSION=).*/\1${{ steps.versions.outputs.ripgrep_latest }}/' docker-debug.sh
+    
+    - name: Create GitHub App token
+      id: app-token
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ secrets.UPDATE_BOT_CLIENT_ID }}
+        private-key: ${{ secrets.UPDATE_BOT_PRIVATE_KEY }}
+    
+    - name: Create Pull Request
+      if: ${{ steps.versions.outputs.update_available == 'true' }}
+      uses: peter-evans/create-pull-request@v8
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        branch: feature/DependencyUpdate
+        sign-commits: true
+        delete-branch: true
+        reviewers: ${{ github.repository_owner }}
+        labels: |
+          enhancement
+          dependencies
+          bot
+        title: "Update Dependencies"
+        commit-message: "Update Dependencies"
+        body: |
+          Updated dependencies:
+          - [ripgrep](https://github.com/BurntSushi/ripgrep): `${{ steps.versions.outputs.ripgrep_current }}` to `${{ steps.versions.outputs.ripgrep_latest }}`

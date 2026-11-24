@@ -428,6 +428,9 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
+# Generated client skill release archives
+/skills/dist/
+
 # Examples
 !examples/.env
 
@@ -440,3 +443,5 @@ FodyWeavers.xsd
 launchSettings.json
 .runsettings
 http-client.env.json
+/AGENTS.md
+/.planning/

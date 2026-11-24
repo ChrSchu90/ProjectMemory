@@ -49,7 +49,12 @@ internal sealed class ProjectRoutingEntity
     /// Gets or sets the project routing status.
     /// </summary>
     [Required]
-    public Status Status { get; set; } = Status.Active;
+    public ProjectStatus Status { get; set; } = ProjectStatus.Active;
+
+    /// <summary>
+    /// Gets or sets the durable intent to purge this archived project.
+    /// </summary>
+    public bool DeletionPending { get; set; }
 
     /// <summary>
     /// Gets or sets when the project routing was created.
@@ -68,7 +73,7 @@ internal sealed class ProjectRoutingEntity
     /// </summary>
     [InverseProperty(nameof(ContextBindingEntity.RoutingProject))]
     public ICollection<ContextBindingEntity> Bindings { get; set; } = new List<ContextBindingEntity>();
-    
+
     #endregion
 
     #region Public Methods
@@ -80,6 +85,6 @@ internal sealed class ProjectRoutingEntity
     #endregion
 
     #region Configuration
-    
+
     #endregion
 }
