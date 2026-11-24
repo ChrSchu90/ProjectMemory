@@ -204,6 +204,10 @@ jobs:
         echo "::error::Image verification failed for ${IMAGE_REF}"
         exit 1
 
+    - name: Pack Skills
+      shell: bash
+      run: ./skills/build-skills.sh
+
     - name: Create Release
       if: ${{ steps.tagver.outputs.is_valid == 'true' }}
       uses: softprops/action-gh-release@v3
@@ -216,3 +220,4 @@ jobs:
           ./${{ env.NET_PUBLISH_DIR }}${{ env.APP_LINUX_X64_ARCHIVE }}
           ./${{ env.NET_PUBLISH_DIR }}${{ env.APP_LINUX_ARM64_ARCHIVE }}
           ./${{ env.NET_PUBLISH_DIR }}${{ env.APP_WIN_X64_ARCHIVE }}
+          ./skills/dist/*.zip
