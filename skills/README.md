@@ -99,6 +99,6 @@ Use the [Hermes entrypoint](clients/hermes/SKILL.md), the optional mergeable [`H
 
 ## Repository source and distribution
 
-The `skills/` directory is the maintained source. The release packaging helper creates five client-specific `ProjectMemory-skill-<client>.zip` archives in the ignored `skills/dist/` directory. Each ZIP contains a top-level `project-memory/` skill folder with its entrypoint, local references, client instruction templates, and supported agent metadata/assets. The GitHub release workflow runs the same helper for valid release tags and attaches all five ZIPs alongside the server archives. The generated ZIPs are distribution files, not connected or verified client installations.
+The `skills/` directory is the maintained source. The release packaging helper creates client-specific `ProjectMemory-skill-<client>.zip` archives in the ignored `skills/dist/` directory. Each ZIP contains a top-level `project-memory/` skill folder with its entrypoint, local references, client instruction templates, and supported agent metadata/assets. The GitHub workflow runs the same helper for valid release tags and attaches all five ZIPs alongside the server archives. The generated ZIPs are distribution files, not connected or verified client installations.
 
 The source includes English documentation and templates, but users may customize their local instructions. It cannot enforce how users install, alter, or run their own agent configuration. No real account, live MCP or system privileges are implied.
