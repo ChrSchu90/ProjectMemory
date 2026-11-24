@@ -63,7 +63,7 @@ skills/
 
 Maintain each technical reference **once** in `common/references/`. These files specify the 15 public MCP operations, the `1.0` result envelope, exact context routing, lexical ripgrep search, Markdown file lifecycle, CAS updates, error handling, optional note structure, safety and Git-origin identity. Keep only client-specific identity selection, interface behavior, and installation guidance in `clients/<client>/`.
 
-**Important:** Client `SKILL.md` files currently link to `../../common/references/` for navigation **within this repository source tree**. This is intentional for single-source maintenance. It is **not** a directly installable client skill folder when copied by itself. Before installing or uploading a standalone skill, copy its referenced shared files into that skill's `references/` directory and rewrite these links to package-local `references/<filename>.md`. No packaging script is included; prepare and validate each standalone distribution before installing it.
+**Important:** Client `SKILL.md` files link to `../../common/references/` for navigation **within this repository source tree**. This is intentional for single-source maintenance. Do not install a client source folder by itself. Run `bash skills/build-skills.sh` from the repository root to build standalone ZIPs under `skills/dist/`. The script copies shared references into each package, rewrites entrypoint links to `references/<filename>.md`, and checks the archives.
 
 The shared icon is available under `common/assets/icon.svg`; include it in clients that support it when packaging.
 
@@ -99,6 +99,6 @@ Use the [Hermes entrypoint](clients/hermes/SKILL.md), the optional mergeable [`H
 
 ## Repository source and distribution
 
-The `skills/` directory is part of this repository. It contains no standalone client archives or packaging helper. Assemble each installable skill with its local references and verify those links before distribution.
+The `skills/` directory is the maintained source. The release packaging helper creates five client-specific `ProjectMemory-skill-<client>.zip` archives in the ignored `skills/dist/` directory. Each ZIP contains a top-level `project-memory/` skill folder with its entrypoint, local references, client instruction templates, and supported agent metadata/assets. The GitHub release workflow runs the same helper for valid release tags and attaches all five ZIPs alongside the server archives. The generated ZIPs are distribution files, not connected or verified client installations.
 
 The source includes English documentation and templates, but users may customize their local instructions. It cannot enforce how users install, alter, or run their own agent configuration. No real account, live MCP or system privileges are implied.

@@ -428,6 +428,9 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
+# Generated client skill release archives
+/skills/dist/
+
 # Examples
 !examples/.env
 
