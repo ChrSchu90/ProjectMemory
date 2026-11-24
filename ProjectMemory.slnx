@@ -3,6 +3,10 @@
     <File Path=".dockerignore" />
     <File Path="docker-debug.sh" />
     <File Path="Dockerfile" />
+    <File Path="examples/.env" />
+  </Folder>
+  <Folder Name="/Docker Items/examples/">
+    <File Path="examples/.env" />
     <File Path="examples/compose.yml" />
   </Folder>
   <Folder Name="/Github Items/">

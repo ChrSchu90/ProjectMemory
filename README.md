@@ -60,21 +60,29 @@ Notes are identified by their project-relative paths, not by database records. Y
 
 ## 🐳 Getting started
 
-ProjectMemory is built with .NET and can run as a single Docker container. The Docker Compose file is located at [`examples/compose.yml`](examples/compose.yml). From the repository root, a minimal example is:
+ProjectMemory runs as a single Docker container. A minimal Compose example and environment template are available under [`examples/`](examples/compose.yml). The example also includes an **optional** OpenAI Secure MCP Tunnel service.
+
+```bash
+docker compose --env-file examples/.env -f examples/compose.yml up -d
+```
+
+By default, the example publishes the MCP endpoint only on `http://127.0.0.1:8000/mcp` (readiness: `/health/ready`). It uses a persistent Docker volume for `/data`. Choose a suitable image tag, runtime UID/GID and network exposure for your own deployment; the example is not a production infrastructure template.
+
+For a one-off local container without Compose:
 
 ```bash
 docker run --rm --user 1000:1000 \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   -v projectmemory-data:/data \
   ghcr.io/chrschu90/project-memory:1
 ```
 
-The MCP endpoint is `http://127.0.0.1:8000/mcp`; the readiness endpoint is `/health/ready`. Connect a compatible MCP client and explicitly create and bind a project before working with its memories.
+Native Linux and Windows release archives require an installed **ripgrep 15.2.0 or newer with PCRE2 support**, discoverable as `rg` (or `rg.exe`) on `PATH`. These archives do not bundle ripgrep. Set `ProjectMemory__DataDirectory` to an existing absolute, writable directory when running outside Docker.
 
-Client-specific skill sources and instruction templates are available under [`skills/`](skills/README.md). They require their own client configuration; the source folders are not ready-made standalone installations.
+Connect a compatible MCP client and explicitly create and bind a project before working with its memories. Client-specific skill sources and instruction templates are available under [`skills/`](skills/README.md); source folders are not standalone installation packages.
 
 ### 🛡️ Operating safely
 
-ProjectMemory is designed for a **private, trusted environment**, not as a multi-user authorization system. A context ID selects a project; it is **not** an authentication credential or a per-client permission boundary. Protect any remotely accessible endpoint with appropriate network restrictions and, where needed, a bearer token (`ProjectMemory__BearerToken`) and an operator-managed HTTPS gateway or tunnel. Never expose a token-free endpoint publicly without an effective external access boundary. Connected AI clients may also send retrieved note content to their own model providers.
+ProjectMemory is designed for a **private, trusted environment**, not as a multi-user authorization system. A context ID selects a project; it is **not** an authentication credential or a per-client permission boundary. The optional `ProjectMemory__BearerToken` is disabled when empty; otherwise MCP callers must supply it (the tunnel example does not configure an upstream bearer header). Protect any remotely reachable endpoint with an effective private network or external ingress boundary, especially if no token is configured. Cloud-facing connections may use an operator-managed HTTPS gateway or tunnel. The example Compose file does not configure your firewall or external access. Connected AI clients may also send retrieved note content to their own model providers.
 
-Only one running ProjectMemory instance should use a given `/data` directory. For backups or restores, **stop the service and copy the entire data directory**, including SQLite, Markdown, and recovery files. Backups are operator-managed; ProjectMemory does not provide a backup service.
+Run only one ProjectMemory server per `/data` directory. Use a suitable non-root runtime UID/GID with access to a private, persistent volume. **Stop the service before directly editing Markdown, backing up or restoring data**. Back up the **entire** `/data` directory as one offline dataset (SQLite and sidecars, Markdown trees, and recovery/quarantine state). Restore it into an empty suitable data volume while stopped; then restart and verify projects, exact context bindings and note contents. Backups and restores are operator-managed, not MCP tools.

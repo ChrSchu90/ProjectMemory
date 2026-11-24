@@ -1,0 +1,33 @@
+services:
+  project-memory:
+    image: ghcr.io/chrschu90/project-memory:1
+    restart: unless-stopped
+    # user: "1000:1000" # Optional: choose a UID/GID with access to /data.
+    environment:
+      TZ: ${TZ:-UTC}
+      ProjectMemory__LogLevel: ${PROJECT_MEMORY_LOG_LEVEL:-Warning}
+      ProjectMemory__BearerToken: ${PROJECT_MEMORY_BEARER_TOKEN:-}
+    volumes:
+      - project-memory-data:/data
+    # Local access by default. Adapt port/network exposure to your deployment.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # Optional: Openai secure MCP tunnel (recommended over direct access)
+  openai-tunnel:
+    image: ghcr.io/openai/tunnel-client:latest
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+      CONTROL_PLANE_API_KEY: ${OPENAI_TUNNEL_API_KEY:-}
+      CONTROL_PLANE_TUNNEL_ID: ${OPENAI_TUNNEL_ID:-}
+      MCP_SERVER_URL: http://project-memory:8000/mcp
+      MCP_STARTUP_WAIT_TIMEOUT: 120s
+      LOG_LEVEL: ${OPENAI_TUNNEL_LOG_LEVEL:-warn}
+      LOG_FORMAT: struct-text
+    depends_on:
+      project-memory:
+        condition: service_healthy
+
+volumes:
+  project-memory-data:
