@@ -7,7 +7,7 @@ DOCKER_FILE=Dockerfile
 IMAGE_NAME=project-memory:dev
 APP_VERSION=0.0.1-debug
 DOCKER_PLATFORM=linux/amd64 # linux/amd64 linux/arm64/v8 linux/arm/v7
-RIPGREP_VERSION=15.2.0
+RIPGREP_VERSION=16.0.0
 
 docker buildx build --load --progress=plain --platform "${DOCKER_PLATFORM}" --build-arg APP_VERSION="${APP_VERSION}" --build-arg RIPGREP_VERSION=${RIPGREP_VERSION} -f "${DOCKER_FILE}" -t "${IMAGE_NAME}" . && \
   docker volume create project-memory_data && \
